@@ -45,10 +45,14 @@ const peerOptions = {
 
 /* ------------------------------------------------------------------ shared */
 
-function wrap(peer, handlers) {
-  const t = {
+/* `into` lets a caller keep ONE object across several connection attempts:
+ * the retry path builds a new peer each time, and if the send helpers close
+ * over a different object than the one attach() fills in, the connection opens
+ * and then silently carries nothing. */
+function wrap(peer, handlers, into) {
+  const t = Object.assign(into || {}, {
     peer,
-    conn: null,
+    conn: into ? into.conn : null,
     host: false,
     slot: 0,
     code: null,
@@ -66,8 +70,8 @@ function wrap(peer, handlers) {
     },
 
     /** Round trip, in milliseconds, or null before the first reply. */
-    ping: null,
-  };
+    ping: into && into.ping !== undefined ? into.ping : null,
+  });
 
   // input travels as the same 10 bytes the WebSocket build sends
   const buf = new ArrayBuffer(10);
@@ -173,47 +177,58 @@ export function createRoom(handlers) {
 
 export function joinRoom(code, handlers) {
   const Peer = requirePeer();
-  const peer = new Peer(peerOptions);
-  const t = wrap(peer, handlers);
-  t.host = false;
-  t.slot = 1;
-  t.code = code;
-
+  const t = { host: false, slot: 1, code, ready: false, conn: null, ping: null };
+  let attempt = 0;
   let settled = false;
-  handlers.status && handlers.status('LOOKING FOR THAT ROOM…');
-  peer.on('open', () => {
-    // RELIABLE, deliberately.
-    //
-    // This was unreliable, which is the textbook choice for streaming state -
-    // and it is wrong here, because the same channel carries every control
-    // message the game has: the handshake, retry, reset, and the events that
-    // decide whether the run ended. Losing one of those silently breaks the
-    // game in ways nobody can diagnose, and no test on one machine can ever
-    // catch it, because loopback never drops anything.
-    //
-    // The cost of reliability is head-of-line blocking when a packet is lost.
-    // Snapshots are absolute state rather than deltas, so a late one is
-    // harmless - it is simply superseded - and the sender below refuses to
-    // queue more when the channel is already backed up, which is what would
-    // actually hurt.
-    const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'binary' });
-    attach(t, conn, handlers);
-    conn.on('open', () => {
-      settled = true;
-      handlers.status && handlers.status('');
-      handlers.open && handlers.open(t);
+
+  /* The free broker refuses a first connection surprisingly often, and more
+   * often for the joiner than for the host: the host only has to register
+   * itself, while the joiner has to be TOLD about somebody else. One quiet
+   * retry turns most "NO SUCH ROOM" reports on a perfectly good code into a
+   * working game - and without it that failure is indistinguishable from a
+   * typo, so the players blame each other and give up. */
+  const attemptJoin = () => {
+    attempt++;
+    const peer = new Peer(peerOptions);
+    wrap(peer, handlers, t);      // fills t in place, so every helper sees it
+
+    handlers.status && handlers.status(
+      attempt > 1 ? 'STILL LOOKING…' : 'LOOKING FOR THAT ROOM…');
+
+    peer.on('open', () => {
+      // RELIABLE: this channel carries the handshake, retry and reset as well
+      // as the snapshots, and a lost control message breaks the game silently.
+      const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'binary' });
+      attach(t, conn, handlers);
+      conn.on('open', () => {
+        settled = true;
+        t.ready = true;
+        handlers.status && handlers.status('');
+        handlers.open && handlers.open(t);
+      });
+      // PeerJS never times out a connection to an id nobody is holding, so
+      // "there is no such room" has to be a clock rather than an error.
+      setTimeout(() => {
+        if (settled) return;
+        try { peer.destroy(); } catch {}
+        if (attempt < 3) return attemptJoin();
+        handlers.fail && handlers.fail('NO SUCH ROOM');
+      }, attempt < 3 ? 6000 : 9000);
     });
-    // PeerJS never times out a connection to an id nobody is holding, so the
-    // "wrong code" case has to be a clock rather than an error
-    setTimeout(() => {
-      if (!settled) handlers.fail && handlers.fail('NO SUCH ROOM');
-    }, 9000);
-  });
-  peer.on('error', (e) => {
-    if (settled) return;
-    settled = true;
-    handlers.fail && handlers.fail(errorText(e));
-  });
+
+    peer.on('error', (e) => {
+      if (settled) return;
+      if (e.type !== 'peer-unavailable' && e.type !== 'network') {
+        settled = true;
+        return handlers.fail && handlers.fail(errorText(e));
+      }
+      try { peer.destroy(); } catch {}
+      if (attempt < 3) setTimeout(attemptJoin, 900);
+      else { settled = true; handlers.fail && handlers.fail(errorText(e)); }
+    });
+  };
+
+  attemptJoin();
   return t;
 }
 
