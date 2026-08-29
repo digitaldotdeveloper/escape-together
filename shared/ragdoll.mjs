@@ -70,8 +70,8 @@ export const TUNE = {
   jumpHold: 11,         // for at most this many steps
   coyote: 7,            // still jumpable this long after leaving the ground
   jumpBuffer: 9,        // a press this early still counts on landing
-  stepHeightMax: 40,    // anything lower than this is a step, not a wall
-  stepLift: 3.2,        // how briskly you are carried over it
+  stepHeightMax: 46,    // anything lower than this is a step, not a wall
+  stepLift: 4.4,        // measured against a 34-tall step: 3.2 fell short
   armSpan: 78,          // an arm is this long; the aim never reaches further
   strength: 0.0062,     // the entire budget of one pair of legs. THE dial.
   tearDist: 110,        // a grip this far past its anchor has been torn off
@@ -310,8 +310,8 @@ export function stepRagdoll(Matter, world, rd, input, all) {
     const headroom = Query.point(others, { x: ahead, y: feet - 96 });
 
     if (low.length && !high.length && !headroom.length) {
-      rd.stepping = 9;
-      rd.stepCool = 26;
+      rd.stepping = 12;
+      rd.stepCool = 22;
     }
   }
   if (rd.stepping > 0) {
@@ -319,7 +319,7 @@ export function stepRagdoll(Matter, world, rd, input, all) {
     // a lift, not a jump: enough to clear a step, gone before it becomes flight
     for (const b of [torso, p.head, p.thighB, p.thighF, p.shinB, p.shinF]) {
       Body.setVelocity(b, {
-        x: b.velocity.x + rd.facing * 0.16,
+        x: b.velocity.x + rd.facing * 0.34,
         y: Math.min(b.velocity.y, -TUNE.stepLift),
       });
     }
@@ -347,7 +347,14 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   else if (rd.jumpBuffer > 0) rd.jumpBuffer--;
 
   if (rd.jumpBuffer > 0 && rd.coyote > 0 && rd.balance > 0.55 && rd.rising <= 0) {
-    const j = TUNE.jumpImpulse;
+    // Carrying something costs you height, which is the whole reason to put a
+    // heavy thing down before jumping and the whole reason not to.
+    let load = 0;
+    for (const side of ['B', 'F']) {
+      const c = rd.grabs[side];
+      if (c && c.bodyB && !c.bodyB.isStatic) load = Math.max(load, c.bodyB.mass);
+    }
+    const j = TUNE.jumpImpulse * (1 - Math.min(0.42, load * 0.075));
     Body.setVelocity(torso, { x: torso.velocity.x, y: -j });
     for (const b of [p.thighB, p.thighF, p.shinB, p.shinF])
       Body.setVelocity(b, { x: b.velocity.x, y: -j * 0.82 });

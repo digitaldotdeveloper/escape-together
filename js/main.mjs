@@ -9,7 +9,7 @@
  */
 
 import { createSim, TICK_HZ } from '../shared/sim.mjs';
-import { BEATS, LEVEL_END } from '../shared/level.mjs';
+import { LEVEL_END } from '../shared/level.mjs';
 import { connect } from './net.mjs';
 import { MODE } from './mode.mjs';
 import * as P2P from './p2p.mjs';
@@ -18,7 +18,7 @@ import { createInput } from './input.mjs';
 import { loadChar, preloadCast, CAST } from './art.mjs';
 import {
   CAM, updateCamera, applyCamera, screenToWorld, drawWorld, drawDust,
-  drawRoomState, ZONES,
+  drawRoomState, zonesFor,
 } from './render.mjs';
 import { UI } from './ui.mjs';
 import { eventById } from '../shared/chaos.mjs';
@@ -70,6 +70,7 @@ const G = {
   bgs: {},
   playing: false,
   solo: false,
+  level: 'coop1',
   authority: false,     // true when THIS browser is running the simulation
   tutorial: createTutorial(),
   firstSnap: true,
@@ -183,8 +184,9 @@ function handleEvent(ev) {
 }
 
 /** Start a fresh hotel. `authority` decides whether this copy is in charge. */
-function useSim(authority) {
-  G.sim = createSim(Matter, { authority });
+function useSim(authority, levelId) {
+  G.level = levelId || G.level || 'coop1';
+  G.sim = createSim(Matter, { authority, level: G.level });
   G.sim.connected = [true, false];
   G.authority = authority;
   G.firstSnap = true;
@@ -198,22 +200,22 @@ async function setChar(slot, id) {
   G.arts[slot] = await loadChar(id);
 }
 
-function join(kind, code, char) {
+function join(kind, code, char, levelId) {
   wake();
   if (G.net) G.net.close();
   G.moment = null;
   G.history = [];
 
-  if (MODE === 'ws') return joinViaServer(kind, code, char);
-  return joinViaPeer(kind, code, char);
+  if (MODE === 'ws') return joinViaServer(kind, code, char, levelId);
+  return joinViaPeer(kind, code, char, levelId);
 }
 
 /* ---- with a room server: it is the authority, we only ever draw ---------- */
 
-function joinViaServer(kind, code, char) {
-  useSim(false);
+function joinViaServer(kind, code, char, levelId) {
+  useSim(false, levelId);
   G.net = connect({
-    open: (net) => net.send({ t: kind, code, char }),
+    open: (net) => net.send({ t: kind, code, char, level: levelId }),
     snapshot: handleSnapshot,
     close: () => UI.setStatus('DISCONNECTED'),
     message: async (msg, net) => {
@@ -221,6 +223,8 @@ function joinViaServer(kind, code, char) {
       if (msg.t === 'err') return UI.setStatus(msg.why);
       if (msg.t === 'joined') {
         G.slot = msg.slot;
+        // the room decides the scene; rebuild if we guessed differently
+        if (msg.level && msg.level !== G.level) useSim(false, msg.level);
         UI.setRoom(msg.code, msg.slot);
         await setChar(msg.slot, char);
       }
@@ -230,7 +234,10 @@ function joinViaServer(kind, code, char) {
         if (other) await setChar(1 - G.slot, other.char);
         UI.setLobby(msg, G.slot);
       }
-      if (msg.t === 'solo') G.sim.connected = [true, true];
+      if (msg.t === 'solo') {
+        G.sim.connected = G.level === 'solo1' ? [true, false] : [true, true];
+        if (G.level !== 'solo1') G.sim.bot = true;
+      }
       if (msg.t === 'reset') {
         G.firstSnap = true;
         G.history = [];
@@ -244,7 +251,7 @@ function joinViaServer(kind, code, char) {
 
 /* ---- with no server: whoever made the room runs the world ---------------- */
 
-function joinViaPeer(kind, code, char) {
+function joinViaPeer(kind, code, char, levelId) {
   const lobby = () => UI.setLobby({
     code: G.net && G.net.code,
     players: [
@@ -257,7 +264,8 @@ function joinViaPeer(kind, code, char) {
     open: async (t) => {
       G.net = t;
       G.slot = t.slot;
-      useSim(t.host);
+      // the host's scene wins; a guest rebuilds when told which it is
+      useSim(t.host, t.host ? levelId : G.level);
       await setChar(G.slot, char);
       UI.setRoom(t.code, t.slot);
       if (!t.host) {
@@ -304,6 +312,11 @@ function joinViaPeer(kind, code, char) {
         lobby();
       }
       if (msg.t === 'hostinfo' && !t.host) {
+        if (msg.level && msg.level !== G.level) {
+          useSim(false, msg.level);
+          G.sim.connected = [true, true];
+          G.slot = 1;
+        }
         await setChar(0, msg.char || 'gary');
         lobby();
       }
@@ -569,9 +582,12 @@ function drawHUD(dt) {
   ctx.fillRect(0, 0, w, 110);
 
   // the beat banner: the level telling you what it wants, once
+  // Beats belong to the scene, not to the game. Reading them from a module
+  // constant meant the solo tutorial announced the co-op level's puzzles.
+  const beats = sim.level.def.beats;
   if (sim.beat !== G.beatShown) {
     G.beatShown = sim.beat;
-    G.banner = { t: 0, beat: BEATS[sim.beat] };
+    G.banner = { t: 0, beat: beats[sim.beat] };
   }
   if (G.banner) {
     G.banner.t += dt;
@@ -629,7 +645,7 @@ function drawHUD(dt) {
   }
 
   // where you are: the name of the room, fading in when it changes
-  const here = ZONES.find((z) => {
+  const here = zonesFor(sim.level.def.id).find((z) => {
     const x = sim.cameraFocus().x;
     return x >= z.from && x < z.to;
   });
@@ -653,20 +669,30 @@ function drawHUD(dt) {
   }
 
   // clock + progress
+  const showClock = !sim.level.def.solo;
   const secs = Math.max(0, Math.ceil(sim.timeLeft / TICK_HZ));
   const mm = String(Math.floor(secs / 60)).padStart(2, '0');
   const ss = String(secs % 60).padStart(2, '0');
   ctx.save();
   ctx.font = '800 22px ui-monospace, monospace';
   ctx.textAlign = 'left';
-  ctx.fillStyle = secs < 60 ? '#ff7a5e' : '#ffe6bd';
-  ctx.fillText(mm + ':' + ss, 20, 34);
-  ctx.font = '600 12px system-ui';
-  ctx.fillStyle = 'rgba(255,235,200,0.6)';
-  ctx.fillText('BEFORE IT ALL COMES DOWN', 20, 52);
+  if (showClock) {
+    ctx.fillStyle = secs < 60 ? '#ff7a5e' : '#ffe6bd';
+    ctx.fillText(mm + ':' + ss, 20, 34);
+    ctx.font = '600 12px system-ui';
+    ctx.fillStyle = 'rgba(255,235,200,0.6)';
+    ctx.fillText('BEFORE IT ALL COMES DOWN', 20, 52);
+  } else {
+    ctx.font = '800 13px system-ui';
+    ctx.fillStyle = 'rgba(255,235,200,0.7)';
+    ctx.fillText(sim.level.def.name, 20, 32);
+    ctx.font = '600 11px system-ui';
+    ctx.fillStyle = 'rgba(255,235,200,0.45)';
+    ctx.fillText('TAKE YOUR TIME', 20, 50);
+  }
 
   const px = 20, py = 64, pw = Math.min(280, w * 0.3);
-  const prog = Math.max(0, Math.min(1, sim.cameraFocus().x / LEVEL_END));
+  const prog = Math.max(0, Math.min(1, sim.cameraFocus().x / sim.level.def.end));
   ctx.fillStyle = 'rgba(0,0,0,0.4)';
   ctx.fillRect(px, py, pw, 7);
   ctx.fillStyle = '#ffd85e';
@@ -677,11 +703,15 @@ function drawHUD(dt) {
   ctx.save();
   ctx.textAlign = 'right';
   ctx.font = '700 13px system-ui';
-  ctx.fillStyle = sim.connected[1 - G.slot] ? '#8fd8ff' : '#ff9a7a';
-  ctx.fillText(sim.connected[1 - G.slot] ? 'FRIEND CONNECTED' : 'WAITING FOR YOUR FRIEND', w - 20, 30);
+  const alone = sim.level.def.solo;
+  if (!alone) {
+    ctx.fillStyle = sim.connected[1 - G.slot] ? '#8fd8ff' : '#ff9a7a';
+    ctx.fillText(sim.connected[1 - G.slot] ? 'FRIEND CONNECTED' : 'WAITING FOR YOUR FRIEND',
+      w - 20, 30);
+  }
   ctx.fillStyle = 'rgba(255,235,200,0.55)';
   ctx.font = '600 12px ui-monospace, monospace';
-  ctx.fillText('ROOM ' + (G.net && G.net.code ? G.net.code : '-----'), w - 20, 50);
+  if (!alone) ctx.fillText('ROOM ' + (G.net && G.net.code ? G.net.code : '-----'), w - 20, 50);
   if (sim.connected[1 - G.slot]) {
     const link = G.authority
       ? (G.ping === null ? 'HOSTING' : 'HOSTING  ' + G.ping + 'ms')
@@ -703,7 +733,9 @@ function drawHUD(dt) {
     ctx.textAlign = 'center';
     ctx.font = '600 13px system-ui';
     ctx.fillStyle = 'rgba(255,240,215,0.85)';
-    ctx.fillText('WASD move   SPACE jump   E / CLICK grab   Q hold to BOOST a friend   R flop',
+    ctx.fillText(sim.level.def.solo
+      ? 'WASD move   SPACE jump (hold for higher)   E / CLICK grab   R flop'
+      : 'WASD move   SPACE jump   E / CLICK grab   Q hold to BOOST a friend   R flop',
       w / 2, h - 26);
     ctx.restore();
   }
@@ -722,13 +754,12 @@ function drawHUD(dt) {
     ctx.restore();
   }
 
-  // Three ways of asking, because no single one is reliable: a phone that has
-  // not been touched yet reports no touches, some Android browsers report a
-  // fine pointer, and a laptop with a touchscreen should still get the pad
-  // once a finger is actually used.
+  // A pointer beats a touchscreen. A laptop with a touch panel, or a phone
+  // plugged into a keyboard, should not be shown thumb controls it does not
+  // need - and once a finger HAS been used, it should.
   const coarse = input.touch
-    || matchMedia('(pointer: coarse)').matches
-    || navigator.maxTouchPoints > 0;
+    || (!input.hasMouse
+      && (matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0));
   if (coarse) drawTouchUI(dt, G.tutorial.currentId());
   if (G.sim.bot) drawBotOrder(coarse);
   G.tutorial.draw(ctx, view, coarse, !G.sim.connected[1 - G.slot]);
@@ -821,43 +852,32 @@ function drawTouchUI(dt, highlight) {
 
   ctx.save();
 
-  // the control band, so a pale wallpaper never swallows the buttons
-  const scrim = ctx.createLinearGradient(0, L.scrimTop, 0, h);
-  scrim.addColorStop(0, 'rgba(18,10,12,0)');
-  scrim.addColorStop(1, 'rgba(18,10,12,0.5)');
-  ctx.fillStyle = scrim;
-  ctx.fillRect(0, L.scrimTop, w, h - L.scrimTop);
 
   // --- the steering thumb -------------------------------------------------
-  const base = stick ? { x: stick.ox, y: stick.oy } : L.stickHome;
-  const knob = stick ? { x: stick.x, y: stick.y } : L.stickHome;
-  const dx = knob.x - base.x, dy = knob.y - base.y;
-  const len = Math.hypot(dx, dy);
-  const cap = Math.min(len, L.stickMax);
-  const kx = len > 0 ? base.x + (dx / len) * cap : base.x;
-  const ky = len > 0 ? base.y + (dy / len) * cap : base.y;
+  // Only drawn while a thumb is actually on it. A permanent ring in the corner
+  // is a permanent obstruction: it sits over the game for the entire session
+  // to tell you something you learn in the first two seconds.
+  if (stick) {
+    const dx = stick.x - stick.ox, dy = stick.y - stick.oy;
+    const len = Math.hypot(dx, dy);
+    const cap = Math.min(len, L.stickMax);
+    const kx = len > 0 ? stick.ox + (dx / len) * cap : stick.ox;
+    const ky = len > 0 ? stick.oy + (dy / len) * cap : stick.oy;
 
-  ctx.globalAlpha = stick ? 0.5 : 0.24;
-  ctx.beginPath();
-  ctx.arc(base.x, base.y, L.stickMax, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(18,10,12,0.5)';
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#ffd85e';
-  ctx.stroke();
-
-  ctx.globalAlpha = stick ? 0.95 : 0.45;
-  ctx.beginPath();
-  ctx.arc(kx, ky, L.stickMax * 0.46, 0, Math.PI * 2);
-  ctx.fillStyle = stick ? '#ffd85e' : 'rgba(255,242,216,0.75)';
-  ctx.fill();
-
-  if (!stick) {
     ctx.globalAlpha = 0.5;
-    ctx.font = '800 ' + Math.round(11 * L.scale) + 'px system-ui, sans-serif';
-    ctx.textAlign = 'center';
+    ctx.beginPath();
+    ctx.arc(stick.ox, stick.oy, L.stickMax, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(18,10,12,0.5)';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffd85e';
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.95;
+    ctx.beginPath();
+    ctx.arc(kx, ky, L.stickMax * 0.46, 0, Math.PI * 2);
     ctx.fillStyle = '#ffd85e';
-    ctx.fillText('MOVE', base.x, base.y + L.stickMax + 16 * L.scale);
+    ctx.fill();
   }
 
   // --- the buttons ---------------------------------------------------------
@@ -979,12 +999,12 @@ function drawMenuScene(dt) {
 
   UI.init({
     cast: CAST,
-    onPlay: (kind, code, char) => {
+    onPlay: (kind, code, char, levelId) => {
       wake();
       const n = audioNodes();
       if (n) initVoice(n.ctx, n.sfxGain);
       setMusic('menu');
-      join(kind, code, char);
+      join(kind, code, char, levelId);
     },
     // pressing ENTER THE HOTEL is what starts the clock, not creating the room
     onStart: () => {
@@ -1000,8 +1020,13 @@ function drawMenuScene(dt) {
       else G.net && G.net.send({ t: 'start' });
     },
     onSolo: () => {
-      if (G.authority) { G.sim.connected = [true, true]; G.sim.bot = true; }
-      else G.net && G.net.send({ t: 'solo' });
+      const soloScene = G.level === 'solo1';
+      if (G.authority) {
+        G.sim.connected = soloScene ? [true, false] : [true, true];
+        G.sim.bot = !soloScene;
+      } else {
+        G.net && G.net.send({ t: 'solo' });
+      }
     },
     onRetry: () => {
       if (G.authority) {

@@ -13,7 +13,8 @@
  * out of place for a moment - is invisible in a game about falling over.
  */
 
-import { buildLevel, FLOOR1, FLOOR2, BEATS, LEVEL_END } from './level.mjs';
+import { buildLevel, FLOOR1, FLOOR2, levelById } from './level.mjs';
+import { DEFAULT_LEVEL } from './levels.mjs';
 import {
   makeRagdoll, addRagdoll, stepRagdoll, tryGrab, releaseGrab, enforceGrabs,
   PART_NAMES,
@@ -39,7 +40,7 @@ export const EMPTY_INPUT = {
   move: 0, jump: false, grab: false, brace: false, limp: false, aim: null,
 };
 
-export function createSim(Matter, { authority = false } = {}) {
+export function createSim(Matter, { authority = false, level: levelId = DEFAULT_LEVEL } = {}) {
   const { Engine, Composite, Body, Bodies, Query, Vector, Events } = Matter;
 
   const engine = Engine.create({
@@ -53,8 +54,12 @@ export function createSim(Matter, { authority = false } = {}) {
   });
   const world = engine.world;
 
-  const level = buildLevel(Matter, world);
+  const level = buildLevel(Matter, world, levelId);
   const { mech } = level;
+  const DEF = level.def;
+  const BEATS = DEF.beats;
+  const SPAWN = DEF.spawns;
+  const LEVEL_END = DEF.end;
 
   /* Every collision worth noticing, with a number for how hard it was.
    *
@@ -97,11 +102,27 @@ export function createSim(Matter, { authority = false } = {}) {
 
   // Both ragdolls always exist, even before player two arrives. A fixed body
   // list is what lets a snapshot be a bare array of floats.
-  const players = SPAWNS.map((s, i) => {
+  const players = SPAWN.map((s, i) => {
     const rd = makeRagdoll(Matter, { x: s.x, y: s.y, id: 'p' + i, tint: i });
     addRagdoll(Matter, world, rd);
     return rd;
   });
+
+  // A solo scene has ONE person in it. The second ragdoll still exists,
+  // because a fixed body list is what keeps the snapshot a bare array of
+  // floats, but it is parked off the map and nothing drives it. No partner,
+  // no bot: the scene has to be finishable alone or it is not a solo scene.
+  if (DEF.solo) {
+    const rd = players[1];
+    // capture the offset as NUMBERS first: torso.position is a live object, so
+    // moving the torso changes the delta for every part after it in the loop
+    const dx = -3000 - rd.parts.torso.position.x;
+    const dy = (FLOOR1 - 400) - rd.parts.torso.position.y;
+    for (const b of rd.bodies) {
+      Body.setPosition(b, { x: b.position.x + dx, y: b.position.y + dy });
+      Body.setStatic(b, true);
+    }
+  }
 
   // Body order for the wire: level dynamics first, then each ragdoll's parts.
   const netBodies = [...level.dynamic];
@@ -126,7 +147,8 @@ export function createSim(Matter, { authority = false } = {}) {
     // not the position their torso happened to have. Storing a torso position
     // meant a player who fell down a lift shaft was put back in mid-air, in
     // the shaft, forever.
-    checkpoint: SPAWNS.map((s) => ({ x: s.x, y: s.y + 45 })),
+    levelId: DEF.id,
+    checkpoint: SPAWN.map((s) => ({ x: s.x, y: s.y + 45 })),
     inputs: [{ ...EMPTY_INPUT }, { ...EMPTY_INPUT }],
     connected: [false, false],
     events: [],                // drained by the server each send
@@ -300,19 +322,35 @@ export function createSim(Matter, { authority = false } = {}) {
     updateDifficulty();
     stepChaosEffects();
     if (sim.sprinklers > 0) sim.sprinklers--;
-    // --- pressure plate -> emergency shutter -------------------------------
-    mech.plateLoad = totalLoadOn(mech.plate, 150, 70);
-    const wantOpen = mech.plateLoad >= PLATE_NEEDS ? 1 : 0;
-    const prev = mech.shutterOpen;
-    // it grinds up slowly and drops like a guillotine, which is the joke
-    mech.shutterOpen = wantOpen
-      ? Math.min(1, mech.shutterOpen + 0.010)
-      : Math.max(0, mech.shutterOpen - 0.026);
-    if (prev > 0.05 && mech.shutterOpen <= 0.05) emit('shutterSlam', { x: 1660 });
-    Body.setPosition(mech.shutter, {
-      x: 1660,
-      y: FLOOR1 - 90 - mech.shutterOpen * 212,   // clears a 104-tall character
-    });
+    // --- pressure plate -> the gate it opens --------------------------------
+    if (mech.plate && mech.shutter) {
+      mech.plateLoad = totalLoadOn(mech.plate, 150, 70);
+      const wantOpen = mech.plateLoad >= mech.plateNeeds ? 1 : 0;
+      const prev = mech.shutterOpen;
+      // it grinds up slowly and drops like a guillotine, which is the joke
+      mech.shutterOpen = wantOpen
+        ? Math.min(1, mech.shutterOpen + 0.010)
+        : Math.max(0, mech.shutterOpen - (mech.shutter.plugin.closeRate ?? 0.026));
+      const sx = mech.shutter.plugin.homeX;
+      if (prev > 0.05 && mech.shutterOpen <= 0.05) emit('shutterSlam', { x: sx });
+      Body.setPosition(mech.shutter, {
+        x: sx,
+        y: FLOOR1 - 90 - mech.shutterOpen * mech.shutter.plugin.travel,
+      });
+    }
+
+    // --- the lump of ceiling that lets go on cue ----------------------------
+    if (mech.ceiling && !mech.ceilingDropped && sim.started) {
+      const near = players.some((rd, i) => sim.connected[i]
+        && Math.abs(rd.parts.torso.position.x - mech.ceilingAt) < 90);
+      if (near) {
+        mech.ceilingDropped = true;
+        Body.setStatic(mech.ceiling, false);
+        Body.setVelocity(mech.ceiling, { x: 0, y: 2 });
+        Body.setAngularVelocity(mech.ceiling, 0.06);
+        emit('ceiling', { x: mech.ceiling.position.x, y: mech.ceiling.position.y });
+      }
+    }
 
     // --- crumbling hallway --------------------------------------------------
     for (const tile of mech.crumble) {
@@ -357,6 +395,7 @@ export function createSim(Matter, { authority = false } = {}) {
     }
 
     // --- the two lift levers ------------------------------------------------
+    if (!mech.levers.length || !mech.lift) return stepRest();
     const pulled = mech.levers.map((l) => Math.abs(l.angle) > 0.42);
     mech.leversOn = pulled;
     const both = pulled[0] && pulled[1];
@@ -366,23 +405,29 @@ export function createSim(Matter, { authority = false } = {}) {
       : Math.max(0, mech.liftPos - 1 / (60 * 1.1));
     if (!wasCalled && mech.liftPos >= 1) emit('liftHere', {});
     Body.setPosition(mech.lift, {
-      x: 4860,
-      y: FLOOR2 + 120 - mech.liftPos * 132,
+      x: mech.lift.plugin.homeX,
+      y: mech.lift.plugin.from - mech.liftPos * mech.lift.plugin.travel,
     });
 
     // Anything standing on the lift rides it, or it slides out from under them
     // like a rug. Static platforms do not carry passengers on their own.
     const dy = mech.lift.position.y - (mech.lift.plugin.lastY ?? mech.lift.position.y);
     if (dy) {
+      const lx = mech.lift.plugin.homeX;
       for (const b of Query.region(Composite.allBodies(world), {
-        min: { x: 4755, y: mech.lift.position.y - 130 },
-        max: { x: 4965, y: mech.lift.position.y - 4 },
+        min: { x: lx - 105, y: mech.lift.position.y - 130 },
+        max: { x: lx + 105, y: mech.lift.position.y - 4 },
       })) {
         if (!b.isStatic) Body.translate(b, { x: 0, y: dy });
       }
     }
     mech.lift.plugin.lastY = mech.lift.position.y;
 
+    return stepRest();
+  }
+
+  /** Everything that happens in every scene, whether or not it has a lift. */
+  function stepRest() {
     // Wet floor. Pulling the alarm soaks everything, and a soaked floor is a
     // very funny place to try to carry a wardrobe.
     const wet = sim.sprinklers > 0;
@@ -531,6 +576,10 @@ export function createSim(Matter, { authority = false } = {}) {
     if (sim.tick % 30 === 0) saveCheckpoints();
 
     for (let i = 0; i < 2; i++) {
+      // An empty slot is not a player who has fallen out of the world. The
+      // out-of-bounds rescue was hauling the parked second ragdoll back to the
+      // spawn point in every solo scene, where it then stood on the player.
+      if (!sim.connected[i]) continue;
       const rd = players[i];
       const t = rd.parts.torso.position;
 
@@ -555,20 +604,30 @@ export function createSim(Matter, { authority = false } = {}) {
       if (rd.launched > 40) { emit('yeet', { player: i }); rd.launched = 0; }
     }
 
-    // both of them, on the lift, with the lift actually here
-    if (sim.state === 'playing' && mech.liftPos >= 1) {
-      const onboard = players.filter((rd, i) => {
-        if (i === 1 && !sim.connected[1]) return true; // solo practice still ends
-        const t = rd.parts.torso.position;
-        return Math.abs(t.x - 4860) < 110 && Math.abs(t.y - (mech.lift.position.y - 60)) < 90;
-      });
-      if (onboard.length === 2) {
-        sim.state = 'escaped';
-        emit('escaped', {});
+    // How a scene ends. With a lift: everybody aboard, lift here. Without one:
+    // simply get to the far end - a solo scene has nobody to wait for.
+    if (sim.state === 'playing') {
+      if (mech.lift) {
+        if (mech.liftPos >= 1) {
+          const lx = mech.lift.plugin.homeX;
+          const onboard = players.filter((rd, i) => {
+            if (i === 1 && !sim.connected[1]) return true;
+            const t = rd.parts.torso.position;
+            return Math.abs(t.x - lx) < 110
+              && Math.abs(t.y - (mech.lift.position.y - 60)) < 90;
+          });
+          if (onboard.length === 2) { sim.state = 'escaped'; emit('escaped', {}); }
+        }
+      } else {
+        const out = players.every((rd, i) => !sim.connected[i]
+          || rd.parts.torso.position.x > LEVEL_END - 160);
+        if (out) { sim.state = 'escaped'; emit('escaped', {}); }
       }
     }
 
-    if (sim.state === 'playing' && sim.started) {
+    // A tutorial with a doom clock is not a tutorial. The solo scene has all
+    // the time in the world; the building is only impatient in co-op.
+    if (sim.state === 'playing' && sim.started && !DEF.solo) {
       sim.timeLeft--;
       if (sim.timeLeft <= 0) { sim.state = 'collapsed'; emit('collapsed', {}); }
     }
@@ -585,7 +644,7 @@ export function createSim(Matter, { authority = false } = {}) {
 
   sim.step = () => {
     // the partner decides what it is doing before anybody moves
-    if (sim.bot && sim.connected[1]) {
+    if (sim.bot && sim.connected[1] && !DEF.solo) {
       sim.setInput(1, botInput(sim, 1, 0, sim.botMode));
       if (botRescue(sim, 1, 0)) {
         const t = players[0].parts.torso.position;
@@ -596,7 +655,18 @@ export function createSim(Matter, { authority = false } = {}) {
 
     for (let i = 0; i < 2; i++) {
       const rd = players[i];
-      const input = sim.connected[i] ? sim.inputs[i] : EMPTY_INPUT;
+
+      // Nobody there: do not simulate them at all. Running the controller on an
+      // absent player is not merely wasted work - it writes velocities and
+      // angular velocities onto bodies that are parked and frozen, and in a
+      // solo scene that was enough to pin the REAL player in place three
+      // thousand units away. An empty slot is empty.
+      if (!sim.connected[i]) {
+        rd.reaching = false;
+        continue;
+      }
+
+      const input = sim.inputs[i];
 
       // grab is edge-triggered: press to take hold, release to let go
       // reaching: the button is down but nothing has been caught yet

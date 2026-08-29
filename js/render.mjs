@@ -137,17 +137,30 @@ function wallpaper(ctx, x, y, w, h) {
  * from that. It is the cheapest possible way to make a building feel like a
  * building rather than a corridor with the same wallpaper printed on it, and
  * it is what lets a player say "meet me by the lifts" and be understood. */
-export const ZONES = [
-  { from: -1200, to: 960,  bg: 'bedroom',  name: 'ROOM 402' },
-  { from: 960,   to: 2860, bg: 'corridor', name: 'FOURTH FLOOR CORRIDOR' },
-  { from: 2860,  to: 3560, bg: 'service',  name: 'SERVICE STAIRS' },
-  { from: 3560,  to: 6600, bg: 'lobby',    name: 'LIFT LOBBY' },
-];
+const ZONE_SETS = {
+  coop1: [
+    { from: -1200, to: 960,  bg: 'bedroom',  name: 'ROOM 402' },
+    { from: 960,   to: 2860, bg: 'corridor', name: 'FOURTH FLOOR CORRIDOR' },
+    { from: 2860,  to: 3560, bg: 'service',  name: 'SERVICE STAIRS' },
+    { from: 3560,  to: 6600, bg: 'lobby',    name: 'LIFT LOBBY' },
+  ],
+  solo1: [
+    { from: -1200, to: 1080, bg: 'bedroom',  name: 'ROOM 402' },
+    { from: 1080,  to: 1800, bg: 'corridor', name: 'THE CORRIDOR' },
+    { from: 1800,  to: 4000, bg: 'service',  name: 'THE FIRE ESCAPE' },
+  ],
+};
 
-const zoneAt = (x) => ZONES.find((z) => x >= z.from && x < z.to) || ZONES[ZONES.length - 1];
+export const zonesFor = (id) => ZONE_SETS[id] || ZONE_SETS.coop1;
+export const ZONES = ZONE_SETS.coop1;
+
+let zoneList = ZONE_SETS.coop1;
+const zoneAt = (x) => zoneList.find((z) => x >= z.from && x < z.to)
+  || zoneList[zoneList.length - 1];
 
 function drawBackdrop(ctx, sim, view, bgs) {
   const { FLOOR1, FLOOR2 } = sim.level.consts;
+  zoneList = zonesFor(sim.level.def.id);
   // warm dusty interior, going black below the lowest floor so a hole in the
   // ground reads as a hole and not as more room
   const g = ctx.createLinearGradient(0, FLOOR2 - 460, 0, FLOOR1 + 30);
@@ -197,15 +210,21 @@ function drawBackdrop(ctx, sim, view, bgs) {
   // it is standing in, so the change of room happens at the doorway rather
   // than wherever the tiling happened to land.
   const px = CAM.x * 0.06;
-  const H = 420;
+  // A character is ~118 units tall and a door should be about 130. Drawn at
+  // 420 the painted doors came out over 250 units - twice life size - and the
+  // hotel read as a doll's house with a giant living in it. 300 puts a door at
+  // roughly a person and a half, which is what a door looks like.
+  const H = 300;
   const tile = (floorY) => {
-    const step = 460;
+    const step = 360;
     const first = Math.floor((CAM.x - 1500 + px) / step) * step;
     for (let x = first; x < CAM.x + 1500; x += step) {
       const z = zoneAt(x + step / 2);
       const bg = bgs[z.bg] || bgs.room;
       if (!bg) { wallpaper(ctx, x - px, floorY - 360, step + 2, 360); continue; }
       const w = (bg.width / bg.height) * H;
+      // draw the wall from its BOTTOM up: the interesting half of these
+      // paintings is the doors and the skirting, not the ceiling
       ctx.drawImage(bg, 0, 0, bg.width, bg.height,
         x - px, floorY - H + 4, Math.max(step + 2, w * 0.42), H);
     }

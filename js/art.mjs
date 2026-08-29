@@ -174,14 +174,20 @@ export function poseFor(rd, dt) {
   const holding = rd.grabs && (rd.grabs.F || rd.grabs.B);
   if (holding) {
     if (m.threw > 0) return 'throw';
-    if (moving) {
-      // pulling it behind you, or shoving it in front
-      const towards = Math.sign(t.velocity.x) === Math.sign(rd.facing);
-      if (!towards) return 'pull';
-      const f = Math.floor(rd.phase / Math.PI) & 1;
-      return ['carry1', 'carry2'][f];
+    // Two completely different jobs. A suitcase is picked up and carried; a
+    // wardrobe is leaned on. Drawing both as "holding something" was the main
+    // reason moving furniture never felt like moving furniture.
+    const body = (rd.grabs.F || rd.grabs.B).bodyB;
+    const light = !body || body.plugin.liftable !== false;
+    const f = Math.floor(rd.phase / Math.PI) & 1;
+    if (light) {
+      if (!moving) return 'carry';
+      const backwards = Math.sign(t.velocity.x) !== Math.sign(rd.facing);
+      return backwards ? ['carryB1', 'carryB2'][f] : ['carry1', 'carry2'][f];
     }
-    return 'carry';
+    if (!moving) return 'push';
+    const towards = Math.sign(t.velocity.x) === Math.sign(rd.facing);
+    return towards ? ['shove1', 'shove2'][f] : 'pull';
   }
 
   // reaching for something, before you have it
@@ -212,7 +218,8 @@ export function drawPosed(ctx, rd, art, dt) {
   const FALLBACK = {
     grabF: 'push', grabB: 'push', grabLow: 'land', pull: 'push',
     carry1: 'carry', carry2: 'carry', throw: 'push', climb: 'jump',
-    slip: 'stunned',
+    slip: 'stunned', lift: 'grabLow', carryB1: 'carry', carryB2: 'carry',
+    shove1: 'push', shove2: 'push',
   };
   let name = poseFor(rd, dt);
   if (!set.img[name]) name = FALLBACK[name] || 'idle';

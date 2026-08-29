@@ -175,12 +175,12 @@ function act(what) {
       break;
     case 'create':
       UI.soloWanted = false;
-      cb.onPlay('create', null, UI.picked);
+      cb.onPlay('create', null, UI.picked, 'coop1');
       break;
     case 'solomode':
-      // straight into the hotel on your own, with the partner
+      // its own scene, built for one person, with nobody to wait for
       UI.soloWanted = true;
-      cb.onPlay('create', null, UI.picked);
+      cb.onPlay('create', null, UI.picked, 'solo1');
       break;
     case 'joinform':
       show('joinform');
@@ -190,7 +190,7 @@ function act(what) {
       const code = $('#codeinput').value.trim().toUpperCase();
       if (code.length < 5) return UI.setStatus('THAT CODE IS TOO SHORT');
       UI.setStatus('');
-      cb.onPlay('join', code, UI.picked);
+      cb.onPlay('join', code, UI.picked, 'coop1');
       break;
     }
     case 'copy': {

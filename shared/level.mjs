@@ -1,17 +1,19 @@
-/* SEASON 1 - THE COLLAPSING HOTEL.
+/* Building a scene.
  *
- * The level is data. Both the server and every client run this same builder in
- * the same order, so body N on one machine is body N on the other and a
- * snapshot is just a list of numbers - no spawn messages, no id negotiation.
+ * The layouts live in levels.mjs as data; this file turns whichever one it is
+ * handed into bodies. Both the server and every client run this same builder
+ * over the same definition in the same order, so body N on one machine is body
+ * N on the other and a snapshot is just a list of numbers.
  *
- * Design rule for every beat: it must be physically impossible alone. Not
- * "hard alone" - impossible. Either something is too heavy for one pair of
- * hands, or something has to be *held* while someone else moves. That is what
- * turns a level into a conversation.
+ * The corollary, learned the hard way: BOTH ENDS MUST BUILD THE SAME LEVEL.
+ * A client on solo1 reading a coop1 snapshot decodes every position from the
+ * wrong offset, and the symptom shows up as the physics exploding rather than
+ * as anything to do with levels. sim.mjs length-checks for exactly that.
  */
 
-export const FLOOR1 = 620;   // y of the ground floor surface
-export const FLOOR2 = 300;   // y of the upper floor surface
+import { LEVELS, DEFAULT_LEVEL, levelById, FLOOR1, FLOOR2 } from './levels.mjs';
+
+export { FLOOR1, FLOOR2, LEVELS, levelById };
 export const LEVEL_END = 5320;
 
 // A room's worth of pastel hotel colours, so the whole thing reads as one place.
@@ -21,91 +23,16 @@ export const PALETTE = {
   bed: '#e8e2d5', accent: '#2f6f8f', hazard: '#e0a01f', shutter: '#b0562a',
 };
 
-/** Every prop in the hotel. A player weighs about 4.7, and `mass` below is in
- *  the same units - so the wardrobe at 15 really is three people, and no
- *  amount of heroic solo shoving will move it. That number IS the level design. */
-const props = [
-  // --- ROOM 402, where they wake up -------------------------------------
-  { id: 'bed1',   type: 'bed',    x: 190,  y: FLOOR1 - 26, w: 190, h: 46 , mass: 5 },
-  { id: 'bed2',   type: 'bed',    x: 470,  y: FLOOR1 - 26, w: 190, h: 46 , mass: 5 },
-  { id: 'lamp',   type: 'lamp',   x: 330,  y: FLOOR1 - 30, w: 22,  h: 54 , mass: 0.6 },
-  { id: 'tv',     type: 'tv',     x: 620,  y: FLOOR1 - 22, w: 70,  h: 44 , mass: 1.3 },
-  { id: 'chair1', type: 'chair',  x: 700,  y: FLOOR1 - 24, w: 42,  h: 46 , mass: 1.0 },
-  // heavy scenery: shovable enough to be fun, far too heavy to be a staircase
-  { id: 'wardrobe', type: 'wardrobe', x: 770, y: FLOOR1 - 84, w: 96, h: 168 , mass: 60, friction: 1.1 },
-
-  // --- CORRIDOR: the pressure plate and the emergency shutter -------------
-  { id: 'case1',  type: 'case',   x: 1180, y: FLOOR1 - 24, w: 74,  h: 48 , mass: 1.9 },
-  { id: 'case2',  type: 'case',   x: 1265, y: FLOOR1 - 24, w: 66,  h: 44 , mass: 1.7 },
-  { id: 'ext1',   type: 'ext',    x: 1090, y: FLOOR1 - 26, w: 24,  h: 52 , mass: 0.9 },
-  { id: 'trolley', type: 'trolley', x: 1230, y: FLOOR1 - 46, w: 120, h: 88 , mass: 6.4 },
-  { id: 'chair2', type: 'chair',  x: 1350, y: FLOOR1 - 24, w: 42,  h: 46 , mass: 1.0 },
-
-  // --- COLLAPSING HALLWAY -------------------------------------------------
-  { id: 'cart',   type: 'trolley', x: 2020, y: FLOOR1 - 46, w: 118, h: 88 , mass: 6.0 },
-  { id: 'crate1', type: 'crate',  x: 2180, y: FLOOR1 - 30, w: 58,  h: 58 , mass: 2.6 },
-  { id: 'plank1', type: 'plank',  x: 2460, y: FLOOR1 - 12, w: 230, h: 20 , mass: 2.2 },
-
-  // --- THE CLIMB to the second floor -------------------------------------
-  { id: 'crate2', type: 'crate',  x: 2900, y: FLOOR1 - 30, w: 62,  h: 62 , mass: 2.6 },
-  { id: 'crate3', type: 'crate',  x: 2990, y: FLOOR1 - 30, w: 62,  h: 62 , mass: 2.6 },
-  { id: 'crate4', type: 'crate',  x: 3080, y: FLOOR1 - 30, w: 62,  h: 62 , mass: 2.6 },
-  { id: 'bed3',   type: 'bed',    x: 3220, y: FLOOR1 - 26, w: 180, h: 46 , mass: 5.0 },
-  { id: 'table1', type: 'table',  x: 3380, y: FLOOR1 - 34, w: 120, h: 62 , mass: 3.2 },
-
-  // --- THE BROKEN SECTION on floor two -----------------------------------
-  { id: 'case3',  type: 'case',   x: 3640, y: FLOOR2 - 24, w: 70,  h: 46 , mass: 1.9 },
-  { id: 'plank2', type: 'plank',  x: 3700, y: FLOOR2 - 12, w: 520, h: 20 , mass: 3.2 },
-  { id: 'crate5', type: 'crate',  x: 4380, y: FLOOR2 - 30, w: 58,  h: 58 , mass: 2.6 },
-
-  // --- THE LOBBY of the emergency lift ------------------------------------
-  { id: 'plant',  type: 'plant',  x: 4600, y: FLOOR2 - 34, w: 46,  h: 68 , mass: 1.2 },
-  { id: 'case4',  type: 'case',   x: 4900, y: FLOOR2 - 24, w: 70,  h: 46 , mass: 1.8 },
-];
-
-/** Static geometry: floors, walls, ledges. `gap` entries are holes to fall in. */
-const statics = [
-  // ground floor slabs, with the hallway holes left out
-  { id: 'f_room',   x: -120, y: FLOOR1, w: 1080, h: 60 },
-  { id: 'f_corr',   x: 960,  y: FLOOR1, w: 900,  h: 60 },
-  { id: 'f_hall_a', x: 1860, y: FLOOR1, w: 300,  h: 60 },
-  // ...then crumbling tiles (built separately), then a gap, then:
-  { id: 'f_hall_b', x: 2620, y: FLOOR1, w: 240,  h: 60 },
-  { id: 'f_climb',  x: 2860, y: FLOOR1, w: 700,  h: 60 },
-
-  // the upper floor, broken in the middle
-  { id: 'f2_a',   x: 3560, y: FLOOR2, w: 300, h: 44 },            // ends at 3860
-  { id: 'f2_b',   x: 4300, y: FLOOR2, w: 200, h: 44 },            // island past the seesaw
-  { id: 'f2_c',   x: 4500, y: FLOOR2, w: 820, h: 44 },            // lift lobby
-
-  // walls and ceilings
-  { id: 'w_left',    x: -140, y: 60,  w: 40, h: 620 },
-  // the wall between room and corridor, with a vent gap at 280..410. The sill
-  // is 210 above the floor - higher than a jump (60) or a jump off the bed,
-  // and reachable only off another person's shoulders.
-  { id: 'w_room_hi', x: 940,  y: 268, w: 30, h: 12 },
-  { id: 'w_room_lo', x: 940,  y: 410, w: 30, h: 210, grab: true },
-  { id: 'vent_sill', x: 900,  y: 410, w: 40, h: 16, grab: true },
-  { id: 'ceil_room', x: -120, y: 268, w: 1030, h: 34 },  // stops short of the vent
-  { id: 'ledge2',    x: 3520, y: FLOOR2, w: 60, h: 44, grab: true }, // lip to haul up onto
-  { id: 'w_end',     x: 5280, y: 120,  w: 40, h: 560 },
-];
-
-/** Floor tiles in the collapsing hallway. Step on one and it lets go. */
-const crumble = [];
-for (let i = 0; i < 9; i++) {
-  crumble.push({ id: 'cr' + i, x: 2160 + i * 52, y: FLOOR1, w: 50, h: 26 });
-}
-
-export function buildLevel(Matter, world) {
+export function buildLevel(Matter, world, levelId = DEFAULT_LEVEL) {
   const { Bodies, Body, Composite, Constraint } = Matter;
+  const L = levelById(levelId);
   const add = (b) => { Composite.add(world, b); return b; };
   const mech = {};
-  const dynamic = [];   // everything the network has to sync, in build order
+  const dynamic = [];   // everything the network syncs, in build order
   const decor = [];
 
   // ---- static geometry ---------------------------------------------------
-  for (const s of statics) {
+  for (const s of L.statics) {
     const b = Bodies.rectangle(s.x + s.w / 2, s.y + s.h / 2, s.w, s.h, {
       isStatic: true, label: 'static:' + s.id, friction: 0.9,
     });
@@ -116,10 +43,10 @@ export function buildLevel(Matter, world) {
   }
 
   // ---- props -------------------------------------------------------------
-  for (const p of props) {
-    // Props carry a target mass, not a density: "the wardrobe weighs three
-    // people" is a design statement, and a prop must not get heavier just
-    // because someone made it bigger.
+  // Props carry a target mass, not a density: "the wardrobe weighs three
+  // people" is a design statement, and a prop must not get heavier just
+  // because somebody made it bigger.
+  for (const p of L.props) {
     const b = Bodies.rectangle(p.x, p.y, p.w, p.h, {
       label: 'prop:' + p.id,
       density: (p.mass || 2) / (p.w * p.h),
@@ -130,119 +57,131 @@ export function buildLevel(Matter, world) {
     });
     b.plugin.kind = p.type;
     b.plugin.propId = p.id;
-    // the renderer draws the shape it was built with, not the rotated bounds
     b.plugin.w = p.w; b.plugin.h = p.h;
+    b.plugin.mass0 = p.mass || 2;
+    // Light enough to pick up and carry, or heavy enough that all you can do
+    // is lean on it. The renderer picks a carrying or a shoving pose from this,
+    // and jumping while holding the light one costs you height.
+    b.plugin.liftable = (p.mass || 2) <= 3.2;
     add(b);
     dynamic.push(b);
     mech[p.id] = b;
   }
 
-  // ---- crumbling hallway tiles ------------------------------------------
+  // ---- crumbling floor tiles ---------------------------------------------
+  // Built DYNAMIC and then frozen, never built static: Matter only remembers a
+  // body's real mass in setStatic(true), so a body created static has none to
+  // restore and the first velocity written to it turns its position into NaN.
   mech.crumble = [];
-  for (const c of crumble) {
-    // Built DYNAMIC and then frozen, never built static. Matter only remembers
-    // a body's real mass in Body.setStatic(true); a body created static has no
-    // remembered mass, so releasing it later leaves mass at Infinity and the
-    // first velocity written to it turns its position into NaN - the tile
-    // vanishes for the rest of the match and can never be put back.
-    const b = Bodies.rectangle(c.x + c.w / 2, c.y + c.h / 2, c.w, c.h, {
-      label: 'crumble:' + c.id, friction: 0.9, density: 0.004,
-    });
-    Body.setStatic(b, true);
-    b.plugin.kind = 'crumble';
-    b.plugin.w = c.w; b.plugin.h = c.h;
-    b.plugin.fuse = -1;      // >=0 once stepped on: steps until it lets go
-    b.plugin.home = { x: b.position.x, y: b.position.y };
-    add(b);
-    dynamic.push(b);
-    mech.crumble.push(b);
+  if (L.crumble) {
+    const c = L.crumble;
+    for (let i = 0; i < c.count; i++) {
+      const x = c.from + i * c.step;
+      const b = Bodies.rectangle(x + c.w / 2, c.y + c.h / 2, c.w, c.h, {
+        label: 'crumble:cr' + i, friction: 0.9, density: 0.004,
+      });
+      Body.setStatic(b, true);
+      b.plugin.kind = 'crumble';
+      b.plugin.w = c.w; b.plugin.h = c.h;
+      b.plugin.fuse = -1;
+      b.plugin.home = { x: b.position.x, y: b.position.y };
+      add(b);
+      dynamic.push(b);
+      mech.crumble.push(b);
+    }
   }
 
-  // ---- the emergency shutter, driven by the pressure plate ---------------
-  // The shutter is kinematic: the sim moves it by hand, so it can crush,
-  // carry and block without ever being pushed around by what it is crushing.
-  const shutter = Bodies.rectangle(1660, FLOOR1 - 90, 34, 200, {
-    isStatic: true, label: 'mech:shutter', friction: 0.4,
-  });
-  shutter.plugin.kind = 'shutter';
-  shutter.plugin.w = 34; shutter.plugin.h = 200;
-  add(shutter);
-  dynamic.push(shutter);
-  mech.shutter = shutter;
-  mech.shutterOpen = 0;      // 0 closed .. 1 fully up
-
-  const plate = Bodies.rectangle(1520, FLOOR1 - 7, 150, 16, {
-    isStatic: true, label: 'mech:plate', friction: 0.9,
-  });
-  plate.plugin.kind = 'plate';
-  plate.plugin.w = 150; plate.plugin.h = 16;
-  add(plate);
-  dynamic.push(plate);
-  mech.plate = plate;
+  // ---- the thing the pressure plate opens ---------------------------------
+  // Kinematic: the sim moves it by hand, so it can block and crush without
+  // being pushed around by what it is blocking.
+  mech.plateNeeds = L.plate ? L.plate.needs : 0;
+  mech.shutterOpen = 0;
   mech.plateLoad = 0;
-
-  // No seesaw here any more. A plank long enough to span the gap also rests
-  // on both lips, which makes it a bridge that cannot tip; a plank short
-  // enough to tip cannot be crossed. The gap is now a BOOST gap - which reuses
-  // the verb the vent already taught - with a loose plank lying nearby as the
-  // second, calmer solution for people who would rather build than fly.
-
-  // ---- the two lift levers, one at each end of the lobby -----------------
-  mech.levers = [];
-  for (const [i, lx] of [4560, 5140].entries()) {
-    const lever = Bodies.rectangle(lx, FLOOR2 - 66, 16, 84, {
-      label: 'mech:lever' + i, density: 0.0009, friction: 0.6, chamfer: { radius: 6 },
+  const gate = L.shutter || L.door;
+  if (gate) {
+    const shutter = Bodies.rectangle(gate.x, FLOOR1 - 90, 34, 200, {
+      isStatic: true, label: 'mech:shutter', friction: 0.4,
     });
-    lever.plugin.kind = 'lever';
-    lever.plugin.w = 16; lever.plugin.h = 84;
-    lever.plugin.leverIndex = i;
-    add(lever);
-    dynamic.push(lever);
-    add(Constraint.create({
-      bodyA: lever, pointA: { x: 0, y: 40 },
-      pointB: { x: lx, y: FLOOR2 - 26 },
-      length: 0, stiffness: 1, render: { visible: false },
-    }));
-    mech.levers.push(lever);
+    shutter.plugin.kind = L.door ? 'door' : 'shutter';
+    shutter.plugin.w = 34; shutter.plugin.h = 200;
+    shutter.plugin.homeX = gate.x;
+    shutter.plugin.travel = gate.travel;
+    shutter.plugin.closeRate = gate.close ?? 0.026;
+    add(shutter);
+    dynamic.push(shutter);
+    mech.shutter = shutter;
+  }
+  if (L.plate) {
+    const plate = Bodies.rectangle(L.plate.x, FLOOR1 - 7, 150, 16, {
+      isStatic: true, label: 'mech:plate', friction: 0.9,
+    });
+    plate.plugin.kind = 'plate';
+    plate.plugin.w = 150; plate.plugin.h = 16;
+    add(plate);
+    dynamic.push(plate);
+    mech.plate = plate;
   }
 
-  // ---- the lift itself ----------------------------------------------------
-  const lift = Bodies.rectangle(4860, FLOOR2 + 120, 210, 22, {
-    isStatic: true, label: 'mech:lift', friction: 1,
-  });
-  lift.plugin.kind = 'lift';
-  lift.plugin.w = 210; lift.plugin.h = 22;
-  add(lift);
-  dynamic.push(lift);
-  mech.lift = lift;
-  mech.liftPos = 0;          // 0 = below the floor, 1 = arrived
+  // ---- the two lift levers, and the lift ----------------------------------
+  mech.levers = [];
+  if (L.levers) {
+    for (const [i, lx] of L.levers.entries()) {
+      const lever = Bodies.rectangle(lx, FLOOR2 - 66, 16, 84, {
+        label: 'mech:lever' + i, density: 0.0009, friction: 0.6, chamfer: { radius: 6 },
+      });
+      lever.plugin.kind = 'lever';
+      lever.plugin.w = 16; lever.plugin.h = 84;
+      lever.plugin.leverIndex = i;
+      add(lever);
+      dynamic.push(lever);
+      add(Constraint.create({
+        bodyA: lever, pointA: { x: 0, y: 40 },
+        pointB: { x: lx, y: FLOOR2 - 26 },
+        length: 0, stiffness: 1, render: { visible: false },
+      }));
+      mech.levers.push(lever);
+    }
+  }
+  mech.liftPos = 0;
+  if (L.lift) {
+    const lift = Bodies.rectangle(L.lift.x, L.lift.from, 210, 22, {
+      isStatic: true, label: 'mech:lift', friction: 1,
+    });
+    lift.plugin.kind = 'lift';
+    lift.plugin.w = 210; lift.plugin.h = 22;
+    lift.plugin.homeX = L.lift.x;
+    lift.plugin.from = L.lift.from;
+    lift.plugin.travel = L.lift.travel;
+    add(lift);
+    dynamic.push(lift);
+    mech.lift = lift;
+  }
+
+  // ---- the lump of ceiling that lets go, once, on cue ---------------------
+  if (L.ceilingDrop) {
+    const c = Bodies.rectangle(L.ceilingDrop.x, 292, 78, 34, {
+      label: 'mech:ceiling', density: 0.0022, friction: 0.7, chamfer: { radius: 3 },
+    });
+    Body.setStatic(c, true);
+    c.plugin.kind = 'debris';
+    c.plugin.w = 78; c.plugin.h = 34;
+    c.plugin.home = { x: L.ceilingDrop.x, y: 292 };
+    add(c);
+    dynamic.push(c);
+    mech.ceiling = c;
+    mech.ceilingAt = L.ceilingDrop.at;
+    mech.ceilingDropped = false;
+  }
 
   // ---- things on the wall that can be pressed -----------------------------
-  // Not puzzle pieces. A room you can only walk through is a corridor; a room
-  // where the lights go off when you lean on the wall is a place two people
-  // will muck about in for a minute before getting on with escaping, and that
-  // minute is most of what makes it feel like a game rather than a test.
-  // Mounted at hand height, not at the height a real light switch would be.
-  // A character's hands hang around 60 above the floor and the upward pull on
-  // them is capped on purpose - two hand springs with no cap are a pair of
-  // helicopter blades - so anything higher than this simply cannot be touched.
-  mech.switches = [
-    { id: 'lights', x: 905,  y: FLOOR1 - 76, w: 22, h: 34, on: true,
-      label: 'LIGHTS' },
-    { id: 'tv',     x: 668,  y: FLOOR1 - 74, w: 26, h: 26, on: false,
-      label: 'TV' },
-    { id: 'alarm',  x: 1105, y: FLOOR1 - 78, w: 26, h: 40, on: false,
-      label: 'ALARM' },
-    { id: 'vend',   x: 4700, y: FLOOR2 - 76, w: 28, h: 34, on: false,
-      label: 'SNACK' },
-  ];
-  for (const sw of mech.switches) sw.held = [false, false];
+  mech.switches = (L.switches || []).map((sw) => ({ ...sw, held: [false, false] }));
 
   // ---- falling debris, pre-made and parked off-stage ----------------------
-  // Pre-made because a fixed body list keeps the network snapshot a plain
-  // array of numbers. Nothing is ever spawned mid-match.
+  // Pre-made because a fixed body list keeps the snapshot a plain array of
+  // numbers. Nothing is ever spawned mid-match.
   mech.debris = [];
-  for (let i = 0; i < 14; i++) {
+  const debrisCount = L.solo ? 5 : 14;
+  for (let i = 0; i < debrisCount; i++) {
     const b = Bodies.rectangle(-900 - i * 90, -600, 34 + (i % 3) * 16, 30 + (i % 4) * 10, {
       label: 'debris:' + i, density: 0.0022, friction: 0.7, chamfer: { radius: 3 },
     });
@@ -262,20 +201,11 @@ export function buildLevel(Matter, world) {
     if (!b.plugin.home) b.plugin.home = { x: b.position.x, y: b.position.y };
   }
 
-  return { mech, dynamic, decor, statics, props, crumble,
-    consts: { FLOOR1, FLOOR2, LEVEL_END } };
+  return {
+    def: L, mech, dynamic, decor,
+    statics: L.statics, props: L.props,
+    consts: { FLOOR1, FLOOR2, LEVEL_END: L.end },
+  };
 }
 
-/** The eight beats, in order. `at` is where the camera banner fires. */
-export const BEATS = [
-  // These captions are read on a phone as often as on a keyboard, so they say
-  // what to do rather than which key to press.
-  { id: 'wake',    at: 120,  title: 'ROOM 402',            hint: 'The door is blocked. Find another way out.' },
-  { id: 'vent',    at: 700,  title: 'THE VENT IS TOO HIGH', hint: 'One holds BOOST. The other jumps off them.' },
-  { id: 'plate',   at: 1150, title: 'EMERGENCY SHUTTER',   hint: 'Something has to hold the plate down.' },
-  { id: 'hall',    at: 1960, title: 'THE FLOOR IS LEAVING', hint: 'Do not stand still.' },
-  { id: 'climb',   at: 2900, title: 'GET UP THERE',        hint: 'Stack the furniture, or boost each other up.' },
-  { id: 'broken',  at: 3700, title: 'THE BROKEN SECTION',  hint: 'Run at your friend and jump. Or build a bridge.' },
-  { id: 'lift',    at: 4500, title: 'EMERGENCY LIFT',      hint: 'Both levers. At the same time.' },
-  { id: 'escape',  at: 5000, title: 'GET IN',              hint: 'Both of you. Now.' },
-];
+export const BEATS = LEVELS[DEFAULT_LEVEL].beats;

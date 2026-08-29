@@ -13,47 +13,54 @@
 
 import { sfx } from './audio.mjs';
 
+/* The steps, in the order Room 402 asks for them.
+ *
+ * Every one of these is doable by one person, because the solo scene is a solo
+ * scene: there is no partner to wait for and no step that quietly needs one.
+ * The last two are the point of the whole game - you will be hit by the
+ * ceiling and you will fall over, and both are supposed to be funny rather
+ * than a failure, so the tutorial says so out loud before it happens.
+ */
 const STEPS = [
   {
     id: 'move',
     title: 'WALK',
-    keys: 'A / D',
-    touch: 'Drag the left of the screen',
-    hint: 'You are not very good at walking. Nobody here is.',
-    check: (s) => Math.abs(s.me.parts.torso.position.x - s.startX) > 120,
+    keys: 'A and D, or the arrow keys',
+    touch: 'Drag anywhere on the left half of the screen',
+    hint: 'You are not good at this. Nobody in this hotel is.',
+    check: (s) => Math.abs(s.me.parts.torso.position.x - s.startX) > 110,
   },
   {
     id: 'jump',
     title: 'JUMP',
-    keys: 'SPACE',
-    touch: 'Tap JUMP',
-    hint: 'It is not much of a jump.',
-    check: (s) => s.me.parts.torso.position.y < s.floorY - 46,
+    keys: 'SPACE  (hold it to jump higher)',
+    touch: 'Tap JUMP  (hold it to jump higher)',
+    hint: 'Hold it down and you go further. Let go early and you do not.',
+    check: (s) => s.me.parts.torso.position.y < s.floorY - 44,
   },
   {
     id: 'grab',
-    title: 'GRAB SOMETHING',
-    keys: 'E  or  LEFT CLICK',
-    touch: 'Tap GRAB near something. Tap again to let go.',
-    hint: 'Beds, doors, luggage, your friend. Aim with the mouse or the stick.',
+    title: 'PICK SOMETHING UP',
+    keys: 'E or LEFT CLICK, next to the suitcase',
+    touch: 'Tap GRAB next to the suitcase. Tap again to let go.',
+    hint: 'Light things get carried. Heavy things only ever get shoved.',
     check: (s) => !!(s.me.grabs.F || s.me.grabs.B),
   },
   {
-    id: 'brace',
-    title: 'HOLD BOOST',
-    keys: 'Q  or  RIGHT CLICK',
-    touch: 'Hold BOOST',
-    hint: 'You plant your feet and cup your hands. Nothing happens on your own.',
-    check: (s) => s.cmd && s.cmd.brace && s.me.grounded > 0,
+    id: 'hurt',
+    title: 'MIND THE CEILING',
+    keys: 'Nothing you can do about this one.',
+    touch: 'Nothing you can do about this one.',
+    hint: 'Getting flattened is not losing. It is most of the entertainment.',
+    check: (s) => s.wasHurt,
   },
   {
-    id: 'boost',
-    title: 'NOW LAUNCH EACH OTHER',
-    keys: 'One holds Q. The other walks up beside them and presses SPACE.',
-    touch: 'One holds BOOST. The other stands beside them and taps JUMP.',
-    hint: 'That is how you get anywhere in this building.',
-    needsPartner: true,
-    check: (s) => s.boosted,
+    id: 'plate',
+    title: 'THE DOOR IS SHUT',
+    keys: 'Put something heavy on the plate and walk through',
+    touch: 'Put something heavy on the plate and walk through',
+    hint: 'You are not heavy enough on your own. The suitcase is.',
+    check: (s) => s.doorOpen,
   },
 ];
 
@@ -67,6 +74,7 @@ export function createTutorial() {
     startX: null,
     floorY: null,
     boosted: false,
+    wasHurt: false,
     finishedAt: 0,
 
     /** Which on-screen button this step wants, so it can be made to glow. */
@@ -80,6 +88,8 @@ export function createTutorial() {
     /** Something happened in the world that a step might be waiting for. */
     noteEvent(ev) {
       if (ev.type === 'boost') t.boosted = true;
+      if (ev.type === 'ceiling') t.wasHurt = true;
+      if (ev.type === 'respawn') t.wasHurt = true;
     },
 
     skip() {
@@ -94,6 +104,7 @@ export function createTutorial() {
       t.i = 0;
       t.startX = null;
       t.boosted = false;
+      t.wasHurt = false;
       localStorage.removeItem('et.tutorial');
     },
 
@@ -115,7 +126,15 @@ export function createTutorial() {
       // impossible, until there is somebody to do it with
       if (step.needsPartner && !sim.connected[1 - slot]) return;
 
-      if (step.check({ me, cmd, startX: t.startX, floorY: t.floorY, boosted: t.boosted })) {
+      const state = {
+        me, cmd, startX: t.startX, floorY: t.floorY,
+        boosted: t.boosted, wasHurt: t.wasHurt,
+        doorOpen: sim.mech.shutterOpen > 0.6,
+        // being knocked down at all counts as having been hurt
+        hurtNow: me.stun > 0 || me.tripped > 0,
+      };
+      if (state.hurtNow) t.wasHurt = true;
+      if (step.check(state)) {
         t.i++;
         t.flash = 1;
         if (t.i >= STEPS.length) {
@@ -168,7 +187,7 @@ export function createTutorial() {
         ctx.fillText('THAT IS EVERYTHING.', 16, 38);
         ctx.fillStyle = 'rgba(255,242,216,0.78)';
         ctx.font = '600 13px system-ui, sans-serif';
-        ctx.fillText('Now get out of the building.', 16, 62);
+        ctx.fillText('Out through the door. Try not to enjoy it.', 16, 62);
         ctx.restore();
         return;
       }
