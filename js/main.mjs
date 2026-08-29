@@ -340,7 +340,15 @@ function joinViaPeer(kind, code, char, levelId) {
     fail: (why) => { UI.setConnecting(''); UI.setStatus(why); },
   };
 
-  G.net = kind === 'create' ? P2P.createRoom(handlers) : P2P.joinRoom(code, handlers);
+  window.__uiLog = (window.__uiLog || []).concat('joinViaPeer ' + kind + ' ' + code);
+  try {
+    G.net = kind === 'create' ? P2P.createRoom(handlers) : P2P.joinRoom(code, handlers);
+  } catch (e) {
+    window.__uiLog.push('joinViaPeer threw: ' + e.message);
+    UI.setStatus(String(e.message || e));
+    return;
+  }
+  window.__uiLog.push('net set: ' + !!G.net);
 
   // measure the link rather than guess at it
   clearInterval(G.pingTimer);

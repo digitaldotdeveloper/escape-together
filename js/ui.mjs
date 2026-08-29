@@ -167,6 +167,7 @@ function hideAll() {
 }
 
 function act(what) {
+  window.__uiLog = (window.__uiLog || []).concat('act:' + what);
   const cb = UI.cb;
   switch (what) {
     case 'play':
@@ -190,7 +191,9 @@ function act(what) {
       const code = $('#codeinput').value.trim().toUpperCase();
       if (code.length < 5) return UI.setStatus('THAT CODE IS TOO SHORT');
       UI.setStatus('');
+      window.__uiLog.push('join -> ' + code + ' cb=' + typeof cb.onPlay);
       cb.onPlay('join', code, UI.picked, 'coop1');
+      window.__uiLog.push('onPlay returned');
       break;
     }
     case 'copy': {
