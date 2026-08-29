@@ -28,20 +28,27 @@ const loadImage = (src) =>
     im.src = src;
   });
 
-export async function loadChar(id) {
-  if (CACHE.has(id)) return CACHE.get(id);
+/* Poses are only fetched for a character somebody is actually going to be.
+ *
+ * Six characters times thirteen drawn poses is seventy-eight images and most
+ * of the download, and the menu needs exactly none of them - it shows the hero
+ * render. Pulling the lot up front pushed the first paint out by seconds on a
+ * phone, which is the one thing a "no download" game cannot afford. */
+export async function loadChar(id, { poses = true } = {}) {
+  const key = id + (poses ? '+poses' : '');
+  if (CACHE.has(key)) return CACHE.get(key);
   const base = asset('char/' + id + '/');
   const p = (async () => {
-    const [head, torso, palette, hero, poses] = await Promise.all([
+    const [head, torso, palette, hero, poseSet] = await Promise.all([
       loadImage(base + 'head.webp'),
       loadImage(base + 'torso.webp'),
       fetch(base + 'palette.json').then((r) => r.json()).catch(() => ({})),
       loadImage(asset('hero/' + id + '.webp')),
-      loadPoses(base + 'poses/'),
+      poses ? loadPoses(base + 'poses/') : null,
     ]);
-    return { id, head, torso, hero, poses, pal: palette };
+    return { id, head, torso, hero, poses: poseSet, pal: palette };
   })();
-  CACHE.set(id, p);
+  CACHE.set(key, p);
   return p;
 }
 
@@ -61,8 +68,9 @@ async function loadPoses(base) {
   return { meta, img };
 }
 
+/** Just enough for the menu: the hero portraits, none of the animation. */
 export function preloadCast() {
-  return Promise.all(CAST.map((c) => loadChar(c.id)));
+  return Promise.all(CAST.map((c) => loadChar(c.id, { poses: false })));
 }
 
 /* ------------------------------------------------------------------ limbs */
