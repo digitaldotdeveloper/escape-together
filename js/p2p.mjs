@@ -189,7 +189,11 @@ export function joinRoom(code, handlers) {
    * typo, so the players blame each other and give up. */
   const attemptJoin = () => {
     attempt++;
-    const peer = new Peer(peerOptions);
+    // new Peer(id, options). Passing the options object as the first argument
+    // makes it the peer's ID - the guest was registering itself on the broker
+    // as the string "[object Object]", which works exactly once per broker and
+    // then collides with every other copy of this game doing the same thing.
+    const peer = new Peer(undefined, peerOptions);
     wrap(peer, handlers, t);      // fills t in place, so every helper sees it
 
     handlers.status && handlers.status(
