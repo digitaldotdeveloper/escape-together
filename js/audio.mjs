@@ -26,6 +26,11 @@ export const audio = {
 };
 
 /** Must be called from a real user gesture or the browser will refuse. */
+/** The sfx bus, so a voice can be mixed in alongside rather than on top. */
+export function audioNodes() {
+  return ctx ? { ctx, sfxGain, master } : null;
+}
+
 export function wake() {
   if (!AC) return;
   if (!ctx) {
@@ -99,6 +104,32 @@ function noise({ dur = 0.2, gain = 0.12, at = 0, band = 0, q = 1, dest = null })
 /* ------------------------------------------------------- the funny noises */
 
 export const sfx = {
+  /* --- impacts, scaled by how hard the thing actually hit ---------------- */
+
+  /** Something landed on something. `force` 0..1. */
+  impact(force, material) {
+    const f = Math.max(0.08, Math.min(1, force));
+    if (material === 'metal') {
+      tone({ freq: 380 + 120 * f, to: 190, dur: 0.16 + f * 0.2,
+        type: 'triangle', gain: 0.05 + 0.10 * f });
+      noise({ dur: 0.09, gain: 0.04 + 0.10 * f, band: 3200, q: 1.6 });
+    } else if (material === 'wood' || material === 'crate' || material === 'bed'
+      || material === 'table' || material === 'wardrobe' || material === 'plank') {
+      tone({ freq: 190 + 90 * f, to: 80, dur: 0.10 + f * 0.14,
+        type: 'square', gain: 0.05 + 0.11 * f });
+      noise({ dur: 0.07, gain: 0.03 + 0.08 * f, band: 900, q: 1.1 });
+    } else {
+      noise({ dur: 0.08 + f * 0.16, gain: 0.05 + 0.16 * f, band: 220 + 180 * f, q: 0.8 });
+      tone({ freq: 120, to: 48, dur: 0.10 + f * 0.12, type: 'sine', gain: 0.04 + 0.10 * f });
+    }
+  },
+
+  /** Air past your ears on a long fall. */
+  whoosh(force) {
+    const f = Math.max(0.1, Math.min(1, force));
+    noise({ dur: 0.34, gain: 0.03 + 0.07 * f, band: 700 + 900 * f, q: 0.6 });
+  },
+
   /** grabbing hold of something: a rubbery little boing */
   boing() {
     tone({ freq: 180, to: 520, dur: 0.13, type: 'triangle', gain: 0.11 });

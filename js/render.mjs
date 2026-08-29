@@ -19,7 +19,7 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
 /* ------------------------------------------------------------------ camera */
 
-export function updateCamera(sim, view, dt, soloFocus) {
+export function updateCamera(sim, view, dt, soloFocus, extraShake = 0) {
   const a = sim.players[0].parts.torso.position;
   const b = sim.connected[1] ? sim.players[1].parts.torso.position : a;
   const midX = (a.x + b.x) / 2;
@@ -53,7 +53,7 @@ export function updateCamera(sim, view, dt, soloFocus) {
   CAM.y = lerp(CAM.y, midY - view.h * lowness / zoom, k);
   CAM.zoom = lerp(CAM.zoom, zoom, k * 0.7);
 
-  CAM.shake = Math.max(sim.shake, CAM.shake - dt * 1.2);
+  CAM.shake = Math.max(Math.max(sim.shake, extraShake), CAM.shake - dt * 1.2);
   const s = CAM.shake * 16;
   CAM.shakeX = (Math.random() - 0.5) * s;
   CAM.shakeY = (Math.random() - 0.5) * s;

@@ -21,7 +21,11 @@ import {
   drawRoomState,
 } from './render.mjs';
 import { UI } from './ui.mjs';
-import { wake, setMusic, setEnabled, audio, sfx } from './audio.mjs';
+import { wake, setMusic, setEnabled, audio, sfx, audioNodes } from './audio.mjs';
+import { initVoice, say, step as footstep } from './voice.mjs';
+import {
+  fx, updateFx, drawFx, clearFx, dust, chips, splash, ring, star, streak, punch, freeze,
+} from './fx.mjs';
 import { createTutorial } from './tutorial.mjs';
 import { controlLayout } from './input.mjs';
 import { orientation } from './orientation.mjs';
@@ -142,6 +146,17 @@ function handleEvent(ev) {
   G.tutorial.noteEvent(ev);
   const play = sfxMap[ev.type];
   if (play) play(ev);
+  if (ev.type === 'boost') {
+    const i = ev.player;
+    say('yelp', G.chars[i], 1);
+    punch(0.4);
+    ring(ev.x, ev.y, 9);
+    dust(ev.x, ev.y + 40, 10, 2.2);
+  }
+  if (ev.type === 'escaped') say('cheer', G.chars[G.slot], 1);
+  if (ev.type === 'tileGo') { punch(0.3); chips(ev.x, 620, 8, 1.6, '120,110,100'); }
+  if (ev.type === 'shutterSlam') { punch(0.7); freeze(70); dust(ev.x, 600, 12, 2.4); }
+  if (ev.type === 'press') star(ev.x, ev.y - 20);
   if (ev.type === 'yeet') moment('yeet');
   if (ev.type === 'respawn' && ev.why === 'fell') moment('fell');
   // escaped / collapsed are deliberately NOT handled here: they are read off
@@ -338,12 +353,18 @@ function advance(dt) {
   }
 
   G.tutorial.update(G.sim, G.slot, cmd, dt);
+  reactToImpacts(dt);
   // the vamp gets faster and nastier as the clock runs down
   audio.intensity = G.sim.started
     ? 1 - Math.max(0, Math.min(1, G.sim.timeLeft / (480 * TICK_HZ)))
     : 0;
 
   if (G.moment) { playMoment(); return; }
+  // Hit-stop. Fifty milliseconds of stillness after a big one is the oldest
+  // trick there is and it does more for weight than any amount of physics.
+  // The accumulator is cleared rather than left running, or the world catches
+  // up in a lurch the moment it unfreezes and the pause reads as a stutter.
+  if (fx.frozen(performance.now())) { stepAcc = 0; return; }
 
   stepAcc += dt;
   let steps = Math.min(4, Math.floor(stepAcc * TICK_HZ));
@@ -388,7 +409,8 @@ function frame(now) {
   ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
   if (!G.playing) { drawMenuScene(dt); return; }
 
-  updateCamera(G.sim, view, dt, G.slot);
+  updateFx(dt);
+  updateCamera(G.sim, view, dt, G.slot, fx.shakeAmount());
   ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
   ctx.fillStyle = '#241a1c';
   ctx.fillRect(0, 0, view.w, view.h);
@@ -396,6 +418,7 @@ function frame(now) {
   applyCamera(ctx, view);   // applies the device pixel ratio itself
   drawWorld(ctx, G.sim, view, G.arts, G.bgs,
     { slot: G.slot, peerName: UI.peerName, dt });
+  drawFx(ctx);
   drawRoomState(ctx, G.sim, view, dt);
   drawDust(ctx, dt, G.sim.shake);
   ctx.restore();
@@ -425,6 +448,93 @@ function toggleBot() {
   sfx.tick();
 }
 window.__toggleBot = toggleBot;
+
+/* ------------------------------------------------------------- reactions */
+
+// Remembered per character so a landing, a footstep or a yelp fires once
+// rather than every frame it is true for.
+const feel = [
+  { air: false, phase: 0, squash: 0, lastYelp: 0 },
+  { air: false, phase: 0, squash: 0, lastYelp: 0 },
+];
+
+/** Turn this frame's collisions into noise, dust and camera movement. */
+function reactToImpacts(dt) {
+  const hits = G.sim.drainImpacts();
+  const focus = G.sim.cameraFocus();
+  const wet = G.sim.sprinklers > 0;
+
+  for (const h of hits) {
+    // only what is on screen: a crate falling down a shaft two rooms away
+    // should not shake the camera or spend a sound
+    if (Math.abs(h.x - focus.x) > 900 || Math.abs(h.y - focus.y) > 700) continue;
+    const force = Math.min(1, h.mag / 26);
+    if (force < 0.06) continue;
+
+    const material = h.kind === 'wall' || h.kind === 'crumble' || h.kind === 'debris'
+      ? 'stone'
+      : h.kind === 'shutter' || h.kind === 'lift' || h.kind === 'plate'
+        || h.kind === 'lever' || h.kind === 'trolley' ? 'metal' : h.kind;
+    sfx.impact(force, material);
+
+    if (h.owner) {
+      // a person hitting something
+      const i = h.owner === 'p0' ? 0 : 1;
+      const rd = G.sim.players[i];
+      const who = G.chars[i];
+      dust(h.x, h.y, 2 + Math.round(force * 6), 0.6 + force * 1.8);
+      if (wet) splash(h.x, h.y, 3 + Math.round(force * 5));
+      feel[i].squash = Math.min(1, feel[i].squash + force);
+      if (force > 0.34) {
+        say(force > 0.62 ? 'oof' : 'grunt', who, force);
+        ring(h.x, h.y, force * 8);
+        punch(force * 0.5);
+        if (force > 0.75) freeze(50 + force * 60);
+        for (let k = 0; k < Math.round(force * 3); k++) star(h.x, h.y - 20);
+      }
+    } else {
+      dust(h.x, h.y, 1 + Math.round(force * 5), 0.5 + force * 1.4);
+      if (force > 0.3) chips(h.x, h.y, 2 + Math.round(force * 5), 0.7 + force);
+      if (force > 0.45) { punch(force * 0.34); ring(h.x, h.y, force * 6); }
+    }
+  }
+
+  // --- per-character continuous feel -------------------------------------
+  for (let i = 0; i < 2; i++) {
+    if (!G.sim.connected[i]) continue;
+    const rd = G.sim.players[i];
+    const f = feel[i];
+    const who = G.chars[i];
+    const t = rd.parts.torso;
+    const airborne = !rd.grounded;
+    const speed = Math.hypot(t.velocity.x, t.velocity.y);
+
+    // footsteps, on the beat of the walk cycle the renderer is already using
+    if (!airborne && Math.abs(t.velocity.x) > 1.2) {
+      const ph = Math.floor(rd.phase / Math.PI);
+      if (ph !== f.phase) {
+        f.phase = ph;
+        footstep(who, Math.min(1, Math.abs(t.velocity.x) / 5), G.sim.sprinklers > 0);
+        dust(t.position.x, rd.parts.shinF.bounds.max.y, 2, 0.5);
+      }
+    }
+
+    // the long fall: air noise, streaks, and eventually a scream
+    if (airborne && t.velocity.y > 8) {
+      streak(t.position.x, t.position.y, -t.velocity.x, -t.velocity.y);
+      if (t.velocity.y > 13) {
+        sfx.whoosh(Math.min(1, t.velocity.y / 26));
+        say('panic', who, 0.8);
+      }
+    }
+    if (rd.launched > 20) say('yelp', who, 1);
+    if (rd.tripped === 13) { say('huh', who, 0.7); dust(t.position.x, t.position.y + 40, 5, 1.2); }
+    if (rd.stun === 1) say('groan', who, 0.5);
+    f.air = airborne;
+    f.squash = Math.max(0, f.squash - dt * 4.2);
+    rd.squash = f.squash;      // the renderer reads this
+  }
+}
 
 /* -------------------------------------------------------------------- HUD */
 
@@ -803,6 +913,8 @@ function drawMenuScene(dt) {
     cast: CAST,
     onPlay: (kind, code, char) => {
       wake();
+      const n = audioNodes();
+      if (n) initVoice(n.ctx, n.sfxGain);
       setMusic('menu');
       join(kind, code, char);
     },
@@ -810,6 +922,8 @@ function drawMenuScene(dt) {
     onStart: () => {
       G.playing = true;
       wake();
+      const n = audioNodes();
+      if (n) initVoice(n.ctx, n.sfxGain);
       // a real tap, which is the only moment a browser will grant either of
       // these: full screen, and a portrait lock where one is available
       orientation.goFullscreen();

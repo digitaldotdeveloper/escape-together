@@ -55,6 +55,45 @@ export function createSim(Matter, { authority = false } = {}) {
   const level = buildLevel(Matter, world);
   const { mech } = level;
 
+  /* Every collision worth noticing, with a number for how hard it was.
+   *
+   * These are NOT sent over the network. Both machines run the same world, so
+   * both machines have the same collisions, and a thump is a presentation
+   * detail rather than a fact anyone has to agree about. Sending them would
+   * add traffic to tell the other end something it already knows.
+   */
+  const impacts = [];
+  Events.on(engine, 'collisionStart', (e) => {
+    for (const pair of e.pairs) {
+      const { bodyA, bodyB } = pair;
+      const speed = Math.hypot(
+        bodyB.velocity.x - bodyA.velocity.x,
+        bodyB.velocity.y - bodyA.velocity.y);
+      // A standing character's limbs are never quite still, and the balance
+      // controller nudges them every step; at 2.2 a person doing nothing on a
+      // bed produced five "impacts" a second and the game rattled.
+      if (speed < 3.2) continue;
+      // reduced mass: a crate hitting a wall is not the same event as a crate
+      // hitting a teaspoon, even at the same speed
+      const ma = bodyA.isStatic ? Infinity : bodyA.mass;
+      const mb = bodyB.isStatic ? Infinity : bodyB.mass;
+      const mu = ma === Infinity ? mb : mb === Infinity ? ma : (ma * mb) / (ma + mb);
+      const mag = speed * Math.min(mu, 14);
+      if (mag < 12) continue;
+      const c = pair.collision && pair.collision.supports && pair.collision.supports[0];
+      impacts.push({
+        x: c ? c.x : (bodyA.position.x + bodyB.position.x) / 2,
+        y: c ? c.y : (bodyA.position.y + bodyB.position.y) / 2,
+        mag,
+        speed,
+        owner: bodyA.plugin.owner || bodyB.plugin.owner || null,
+        part: bodyA.plugin.part || bodyB.plugin.part || null,
+        kind: bodyA.plugin.owner ? bodyB.plugin.kind || 'wall' : bodyA.plugin.kind || 'wall',
+      });
+      if (impacts.length > 24) impacts.shift();
+    }
+  });
+
   // Both ragdolls always exist, even before player two arrives. A fixed body
   // list is what lets a snapshot be a bare array of floats.
   const players = SPAWNS.map((s, i) => {
@@ -92,6 +131,7 @@ export function createSim(Matter, { authority = false } = {}) {
     sprinklers: 0,
     wasWet: false,
     botAnchor: null,
+    impacts,
   };
 
   /* ------------------------------------------------------------- mechanisms */
@@ -160,6 +200,25 @@ export function createSim(Matter, { authority = false } = {}) {
     }
   }
 
+  /** Only what a player weighs, for things that should react to people. */
+  function playerLoadOn(body, width, height) {
+    const p = body.position;
+    const region = {
+      min: { x: p.x - width / 2, y: p.y - height },
+      max: { x: p.x + width / 2, y: p.y - 2 },
+    };
+    let load = 0;
+    const seen = new Set();
+    for (const b of Query.region(Composite.allBodies(world), region)) {
+      const owner = b.plugin.owner;
+      if (!owner || seen.has(owner)) continue;
+      seen.add(owner);
+      const rd = players.find((r) => r.id === owner);
+      if (rd) load += rd.bodies.reduce((s, x) => s + x.mass, 0);
+    }
+    return load;
+  }
+
   function stepMechanisms() {
     stepSwitches();
     if (sim.sprinklers > 0) sim.sprinklers--;
@@ -181,7 +240,11 @@ export function createSim(Matter, { authority = false } = {}) {
     for (const tile of mech.crumble) {
       const pl = tile.plugin;
       if (pl.fuse === -1 && tile.isStatic) {
-        const load = totalLoadOn(tile, 50, 40);
+        // A PERSON has to step on it. It used to be any weight at all, and a
+        // plank happened to be lying across the hallway at the start of every
+        // match - so the floor collapsed on its own, in an empty room, before
+        // either player had left the bedroom.
+        const load = playerLoadOn(tile, 50, 40);
         if (load > 0.5) { pl.fuse = 34; emit('creak', { x: tile.position.x }); }
       } else if (pl.fuse > 0) {
         pl.fuse--;
@@ -445,6 +508,7 @@ export function createSim(Matter, { authority = false } = {}) {
   sim.cameraFocus = cameraFocus;
   sim.respawn = respawn;
   sim.drainEvents = () => { const e = sim.events; sim.events = []; return e; };
+  sim.drainImpacts = () => impacts.splice(0, impacts.length);
 
   /* -------------------------------------------------------------- snapshots */
 

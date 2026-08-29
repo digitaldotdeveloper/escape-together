@@ -123,7 +123,7 @@ export function makeRagdoll(Matter, { x, y, id, tint }) {
     facing: 1, phase: 0, balance: 1, limp: 0, grounded: 0, bracing: false,
     grabs: { B: null, F: null },   // active grab constraints, per hand
     aim: null,   // world point the hands reach for; null = let them hang
-    stun: 0, launched: 0, lastImpact: 0,
+    stun: 0, launched: 0, lastImpact: 0, lastVx: 0, tripped: 0,
     spawn: { x, y },
   };
   return rd;
@@ -177,6 +177,27 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   const lean = Math.abs(angleDiff(torso.angle, 0));
   if (input.limp) rd.limp = Math.max(rd.limp, 6);
   if (lean > TUNE.tripAngle && rd.grounded && !rd.stun) rd.stun = TUNE.getUpTime;
+
+  // TRIP. Running flat out and then stopping dead or turning on the spot should
+  // take your legs from under you. This is most of the comedy in the genre and
+  // it was completely missing: the character was sure-footed, which is another
+  // way of saying nothing surprising ever happened to them.
+  const vx = torso.velocity.x;
+  // These thresholds are in units PER STEP. Measured, not assumed: the top
+  // speed a character actually reaches is about 6 per step and the biggest
+  // single-step change is about 1.5, so anything written against runSpeed or
+  // against the average travel speed simply never fires.
+  const turning = input.move !== 0 && Math.sign(input.move) !== Math.sign(vx)
+    && Math.abs(vx) > 2.6;
+  const stopping = Math.abs(rd.lastVx - vx) > 1.2;
+  if (rd.grounded && !rd.stun && rd.limp <= 0 && (turning || stopping)
+      && Math.random() < 0.4) {
+    rd.stun = Math.round(TUNE.getUpTime * 0.55);
+    rd.tripped = 14;
+    Body.setAngularVelocity(torso, torso.angularVelocity + Math.sign(vx || 1) * 0.24);
+  }
+  rd.lastVx = vx;
+  if (rd.tripped > 0) rd.tripped--;
   if (rd.stun > 0) rd.stun--;
   if (rd.limp > 0) rd.limp--;
 

@@ -201,6 +201,16 @@ export function drawPosed(ctx, rd, art, dt) {
   ctx.translate(ax, ay);
   ctx.rotate(lean);
   if (rd.facing < 0) ctx.scale(-1, 1);
+
+  // Squash on impact, stretch in the air. Two lines, and it is most of the
+  // difference between a photograph that moves and a character.
+  const vy = parts.torso.velocity.y;
+  const squash = Math.min(0.34, rd.squash || 0);
+  const stretch = !rd.grounded ? Math.max(-0.12, Math.min(0.16, vy * 0.012)) : 0;
+  const sy = 1 - squash * 0.55 + stretch;
+  const sx = 1 + squash * 0.4 - stretch * 0.6;
+  ctx.scale(sx, sy);
+
   const dx = (p.x - m.canvas[0] / 2) * scale;
   const dy = (p.y - m.refFootY) * scale;
   ctx.drawImage(img, dx, dy, p.w * scale, p.h * scale);
