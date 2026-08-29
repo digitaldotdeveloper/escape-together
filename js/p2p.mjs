@@ -58,6 +58,15 @@ function wrap(peer, handlers) {
       try { peer.destroy(); } catch {}
     },
     send(obj) { if (t.conn && t.conn.open) t.conn.send(obj); },
+
+    /** How much is queued but not yet on the wire. */
+    backlog() {
+      const dc = t.conn && t.conn.dataChannel;
+      return dc ? dc.bufferedAmount : 0;
+    },
+
+    /** Round trip, in milliseconds, or null before the first reply. */
+    ping: null,
   };
 
   // input travels as the same 10 bytes the WebSocket build sends
@@ -173,7 +182,21 @@ export function joinRoom(code, handlers) {
   let settled = false;
   handlers.status && handlers.status('LOOKING FOR THAT ROOM…');
   peer.on('open', () => {
-    const conn = peer.connect(PREFIX + code, { reliable: false, serialization: 'binary' });
+    // RELIABLE, deliberately.
+    //
+    // This was unreliable, which is the textbook choice for streaming state -
+    // and it is wrong here, because the same channel carries every control
+    // message the game has: the handshake, retry, reset, and the events that
+    // decide whether the run ended. Losing one of those silently breaks the
+    // game in ways nobody can diagnose, and no test on one machine can ever
+    // catch it, because loopback never drops anything.
+    //
+    // The cost of reliability is head-of-line blocking when a packet is lost.
+    // Snapshots are absolute state rather than deltas, so a late one is
+    // harmless - it is simply superseded - and the sender below refuses to
+    // queue more when the channel is already backed up, which is what would
+    // actually hurt.
+    const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'binary' });
     attach(t, conn, handlers);
     conn.on('open', () => {
       settled = true;

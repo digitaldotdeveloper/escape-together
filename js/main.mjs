@@ -70,6 +70,8 @@ const G = {
   moment: null,         // { until, caption, frames, i }
   beatShown: -1,
   banner: null,
+  endShown: false,
+  ping: null,
 };
 G.sim.connected = [true, false];
 
@@ -119,6 +121,19 @@ function handleSnapshot(f) {
   G.firstSnap = false;
   G.history.push(f);
   if (G.history.length > 130) G.history.shift();
+  syncEndScreen();
+}
+
+/** Whether the run is over is carried in every snapshot, so the end screen is
+ *  driven by that rather than by catching a single event. An event can be
+ *  missed; a state cannot. */
+function syncEndScreen() {
+  const over = G.sim.state !== 'playing';
+  if (over === G.endShown) return;
+  G.endShown = over;
+  if (!over) return UI.hideEnd();
+  if (G.sim.state === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true); }
+  else { sfx.fail(); moment('collapsed'); UI.showEnd(false); }
 }
 
 function handleEvent(ev) {
@@ -127,8 +142,8 @@ function handleEvent(ev) {
   if (play) play();
   if (ev.type === 'yeet') moment('yeet');
   if (ev.type === 'respawn' && ev.why === 'fell') moment('fell');
-  if (ev.type === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true); }
-  if (ev.type === 'collapsed') { sfx.fail(); moment('collapsed'); UI.showEnd(false); }
+  // escaped / collapsed are deliberately NOT handled here: they are read off
+  // the snapshot state instead, so a lost event cannot leave the run hanging
 }
 
 /** Start a fresh hotel. `authority` decides whether this copy is in charge. */
@@ -244,6 +259,8 @@ function joinViaPeer(kind, code, char) {
 
     message: async (msg, t) => {
       if (msg.t === 'err') return UI.setStatus(msg.why);
+      if (msg.t === 'ping') return t.send({ t: 'pong', at: msg.at });
+      if (msg.t === 'pong') { G.ping = Math.round(performance.now() - msg.at); return; }
       if (msg.t === 'ev' && !t.host) return msg.events.forEach(handleEvent);
       if (msg.t === 'hello' && t.host) {
         await setChar(1, msg.char || 'brick');
@@ -275,6 +292,16 @@ function joinViaPeer(kind, code, char) {
   };
 
   G.net = kind === 'create' ? P2P.createRoom(handlers) : P2P.joinRoom(code, handlers);
+
+  // measure the link rather than guess at it
+  clearInterval(G.pingTimer);
+  G.pingTimer = setInterval(() => {
+    if (G.net && G.net.conn && G.net.conn.open) {
+      G.net.send({ t: 'ping', at: performance.now() });
+    } else {
+      G.ping = null;
+    }
+  }, 2000);
 }
 
 /* --------------------------------------------------------------- the loop */
@@ -328,11 +355,16 @@ function advance(dt) {
   snapAcc = 0;
   const events = G.sim.drainEvents();
   events.forEach(handleEvent);
+  syncEndScreen();
   const f = G.sim.snapshot();
   G.history.push(f);
   if (G.history.length > 130) G.history.shift();
   if (G.net && G.net.conn && G.net.conn.open) {
-    G.net.conn.send(f.buffer.slice(0));
+    // On a reliable channel an unsent snapshot is not dropped, it is queued -
+    // so on a link that cannot keep up, sending regardless builds a backlog
+    // that gets further behind every second. Four frames' worth is plenty;
+    // past that, skip this one. The next snapshot supersedes it anyway.
+    if (G.net.backlog() < 4 * f.byteLength) G.net.conn.send(f.buffer.slice(0));
     if (events.length) G.net.send({ t: 'ev', events });
   }
 }
@@ -458,6 +490,14 @@ function drawHUD(dt) {
   ctx.fillStyle = 'rgba(255,235,200,0.55)';
   ctx.font = '600 12px ui-monospace, monospace';
   ctx.fillText('ROOM ' + (G.net && G.net.code ? G.net.code : '-----'), w - 20, 50);
+  if (sim.connected[1 - G.slot]) {
+    const link = G.authority
+      ? (G.ping === null ? 'HOSTING' : 'HOSTING  ' + G.ping + 'ms')
+      : (G.ping === null ? 'MEASURING…' : G.ping + 'ms');
+    ctx.fillStyle = G.ping !== null && G.ping > 220
+      ? 'rgba(255,150,110,0.8)' : 'rgba(255,235,200,0.45)';
+    ctx.fillText(link, w - 20, 68);
+  }
   ctx.restore();
 
   // the controls, for the first half minute, because the brief says thirty
