@@ -1,0 +1,235 @@
+/* The look is taken from the cast: warm hotel gold, carpet red, and the same
+   soft chunky roundness the characters are drawn with. Nothing is square,
+   nothing is grey, and every control is big enough to hit while laughing. */
+
+:root {
+  --gold: #ffd85e;
+  --gold-deep: #e0a92b;
+  --carpet: #8d3540;
+  --carpet-deep: #5f2028;
+  --cream: #fff2d8;
+  --ink: #2a1a17;
+  --panel: rgba(46, 28, 26, 0.94);
+  --edge: rgba(255, 216, 94, 0.28);
+  --shadow: 0 14px 0 rgba(0, 0, 0, 0.28);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  background: #241a1c; color: var(--cream);
+  font-family: ui-rounded, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  overscroll-behavior: none;
+}
+
+#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* ------------------------------------------------------------------ screens */
+
+.screen {
+  position: fixed; inset: 0; display: none;
+  flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; padding: 24px; text-align: center;
+  overflow-y: auto; overscroll-behavior: contain;
+  justify-content: safe center;
+}
+.screen.show { display: flex; }
+
+/* The menu sits inside the game's own key art. Two scrims over it: a vertical
+   one so the logo has something dark to bite into, and a flat one so body text
+   never has to compete with a chandelier. */
+#menu {
+  background:
+    linear-gradient(180deg, rgba(24,12,14,.86) 0%, rgba(24,12,14,.42) 34%, rgba(24,12,14,.88) 100%),
+    url('../assets/bg/keyart.webp') center 42% / cover no-repeat,
+    #2a1c20;
+}
+
+.panel {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(120, 66, 44, .93), rgba(32, 20, 20, .97)),
+    url('../assets/bg/keyart.webp') center / cover no-repeat;
+  backdrop-filter: blur(3px);
+}
+.panel.wide .cards { max-width: 1080px; }
+
+.overlay { background: rgba(24, 12, 14, 0.78); backdrop-filter: blur(4px); }
+
+/* -------------------------------------------------------------------- brand */
+
+.brandwrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+
+.logo {
+  margin: 0; line-height: 0.84; letter-spacing: -0.02em;
+  font-size: clamp(38px, min(9vw, 13vh), 112px); font-weight: 900; font-style: italic;
+  color: var(--gold);
+  text-shadow:
+    0 5px 0 var(--gold-deep), 0 10px 0 #a8761b,
+    0 16px 24px rgba(0, 0, 0, .55);
+}
+.logo span { display: block; color: var(--cream); text-shadow: 0 5px 0 #b8703c, 0 10px 0 #7d4626, 0 16px 24px rgba(0,0,0,.5); }
+
+.tagline { margin: min(12px,1.4vh) 0 0; font-weight: 800; letter-spacing: .34em; font-size: clamp(11px, 2vw, 15px); color: var(--gold); }
+.pitch { margin: 2px 0 0; color: rgba(255, 242, 216, .72); font-size: 14px; max-width: 34ch; }
+
+.badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.badge {
+  font-size: 11px; font-weight: 900; letter-spacing: .12em; padding: 5px 11px;
+  border-radius: 999px; background: var(--carpet); color: var(--cream);
+  border: 2px solid rgba(255, 216, 94, .45);
+}
+.badge.alt { background: #2f6f4f; }
+
+/* ------------------------------------------------------------------ buttons */
+
+.btn {
+  font: inherit; font-weight: 900; letter-spacing: .06em;
+  padding: min(13px, 1.4vh) 26px; min-width: 210px;
+  border: 0; border-radius: 16px; cursor: pointer;
+  background: var(--gold); color: var(--ink);
+  box-shadow: 0 6px 0 var(--gold-deep), 0 10px 18px rgba(0, 0, 0, .35);
+  transition: transform .07s ease, box-shadow .07s ease, filter .15s;
+}
+.btn:hover { filter: brightness(1.06); }
+.btn:active { transform: translateY(4px); box-shadow: 0 2px 0 var(--gold-deep); }
+.btn.big { font-size: 21px; padding: 17px 40px; }
+.btn.ghost {
+  background: rgba(255, 242, 216, .09); color: var(--cream);
+  box-shadow: inset 0 0 0 2px var(--edge);
+}
+.btn.ghost:active { transform: translateY(2px); }
+.btn[disabled] { opacity: .45; pointer-events: none; }
+
+.back {
+  position: absolute; top: 18px; left: 18px;
+  background: none; border: 0; color: var(--gold); font: inherit; font-weight: 800;
+  cursor: pointer; padding: 8px 10px; font-size: 13px; letter-spacing: .1em;
+}
+
+#pausebtn {
+  position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+  display: none; width: 44px; height: 34px; border: 0; border-radius: 10px;
+  background: rgba(30, 18, 18, .6); color: var(--cream); font-size: 20px; cursor: pointer;
+}
+body.playing #pausebtn { display: block; }
+
+/* -------------------------------------------------------------------- menu */
+
+.menucols {
+  display: flex; gap: 34px; align-items: center; justify-content: center;
+  flex-wrap: wrap; margin-top: 8px;
+}
+.mainbuttons { display: flex; flex-direction: column; gap: min(9px, 1vh); }
+.menuside { display: flex; }
+
+.pickedcard {
+  width: 250px; border-radius: 20px; padding: 14px;
+  background: rgba(20, 12, 12, .5); box-shadow: inset 0 0 0 2px var(--edge);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.pickedcard img { height: 190px; object-fit: contain; filter: drop-shadow(0 10px 12px rgba(0,0,0,.5)); }
+.pickedcard b { color: var(--gold); letter-spacing: .08em; }
+.pickedcard .tiny { color: rgba(255,242,216,.6); }
+
+.status { min-height: 20px; font-weight: 800; color: #ff9a7a; letter-spacing: .1em; font-size: 13px; }
+.footnote { color: rgba(255, 242, 216, .38); font-size: 12px; margin: 0; }
+.tiny { font-size: 11px; color: rgba(255, 242, 216, .5); }
+
+h2 { font-size: clamp(24px, 4.4vw, 40px); font-weight: 900; margin: 0; color: var(--gold); letter-spacing: .02em; }
+h3 { color: var(--gold); letter-spacing: .1em; font-size: 14px; margin: 0 0 6px; }
+.sub { margin: 0; color: rgba(255, 242, 216, .72); max-width: 48ch; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+/* -------------------------------------------------------------------- code */
+
+.code {
+  font: 900 40px/1 ui-monospace, monospace; letter-spacing: .34em;
+  text-align: center; text-transform: uppercase;
+  width: min(340px, 84vw); padding: 16px 10px 16px 24px;
+  border-radius: 16px; border: 3px solid var(--edge);
+  background: rgba(10, 6, 6, .5); color: var(--cream);
+}
+.code:focus { outline: 0; border-color: var(--gold); }
+
+.codebox {
+  font: 900 clamp(34px, 9vw, 62px)/1 ui-monospace, monospace; letter-spacing: .3em;
+  color: var(--gold); padding: 12px 18px 12px 32px; border-radius: 18px;
+  background: rgba(10, 6, 6, .45); box-shadow: inset 0 0 0 3px var(--edge);
+}
+body.streamer .codebox span, body.streamer #roomcode { filter: blur(13px); }
+
+.lobbyslots { display: flex; gap: 14px; }
+.slot {
+  width: 150px; border-radius: 16px; padding: 10px;
+  background: rgba(20, 12, 12, .45); box-shadow: inset 0 0 0 2px var(--edge);
+}
+.slot img { height: 110px; object-fit: contain; }
+.slot.empty { opacity: .4; }
+.slot b { display: block; color: var(--gold); font-size: 13px; letter-spacing: .08em; }
+
+/* ------------------------------------------------------------------- cards */
+
+.cards {
+  display: grid; gap: 14px; width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  max-width: 900px;
+}
+.card {
+  border-radius: 20px; padding: 12px; cursor: pointer; text-align: center;
+  background: rgba(20, 12, 12, .5); box-shadow: inset 0 0 0 2px var(--edge);
+  transition: transform .1s ease, box-shadow .1s ease;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.card:hover { transform: translateY(-4px); box-shadow: inset 0 0 0 2px var(--gold); }
+.card.picked { box-shadow: inset 0 0 0 3px var(--gold), 0 10px 22px rgba(0,0,0,.45); background: rgba(60, 34, 24, .7); }
+.card img { height: 168px; object-fit: contain; filter: drop-shadow(0 8px 10px rgba(0,0,0,.45)); }
+.card b { color: var(--gold); letter-spacing: .08em; }
+.card .tag { font-size: 11px; letter-spacing: .07em; color: rgba(255,242,216,.62); }
+.card .quip { font-size: 12px; font-style: italic; color: rgba(255,242,216,.8); min-height: 30px; }
+.card .price { font-weight: 900; color: var(--cream); background: var(--carpet); padding: 3px 12px; border-radius: 999px; font-size: 13px; }
+.card.locked { opacity: .62; cursor: default; }
+.card.locked:hover { transform: none; box-shadow: inset 0 0 0 2px var(--edge); }
+.card .season { font-size: 11px; font-weight: 900; letter-spacing: .16em; color: var(--gold-deep); }
+.card .thumb {
+  height: 110px; width: 100%; border-radius: 14px; display: grid; place-items: center;
+  font-size: 44px;
+}
+
+.roadmap {
+  margin-top: 22px; max-width: 620px; padding: 16px 20px; border-radius: 18px;
+  background: rgba(20, 12, 12, .45); box-shadow: inset 0 0 0 2px var(--edge);
+}
+.roadmap p { margin: 4px 0; color: rgba(255,242,216,.75); font-size: 13px; }
+
+/* -------------------------------------------------------------------- form */
+
+.form { display: grid; gap: 10px; width: min(460px, 92vw); text-align: left; }
+.form label { display: grid; gap: 4px; font-size: 11px; font-weight: 900; letter-spacing: .12em; color: var(--gold); }
+.form input, .form select, .form textarea {
+  font: 500 15px/1.3 inherit; padding: 10px 12px; border-radius: 12px;
+  border: 2px solid var(--edge); background: rgba(10, 6, 6, .45); color: var(--cream);
+}
+.form input:focus, .form select:focus, .form textarea:focus { outline: 0; border-color: var(--gold); }
+.perks { margin-top: 14px; text-align: left; width: min(460px, 92vw); }
+.perks ul { margin: 4px 0; padding-left: 20px; color: rgba(255,242,216,.8); font-size: 14px; }
+code { background: rgba(255,216,94,.16); padding: 1px 7px; border-radius: 6px; color: var(--gold); font-weight: 800; }
+
+.toggle {
+  display: flex; gap: 10px; align-items: center; font-weight: 700;
+  width: min(460px, 92vw); text-align: left; padding: 10px 14px; border-radius: 14px;
+  background: rgba(20, 12, 12, .4); box-shadow: inset 0 0 0 2px var(--edge); cursor: pointer;
+}
+.toggle input { width: 20px; height: 20px; accent-color: var(--gold); }
+.toggle .tiny { flex: 1 1 100%; }
+.keys { margin-top: 10px; width: min(560px, 92vw); text-align: left; }
+.keys p { margin: 3px 0; font-size: 13px; color: rgba(255,242,216,.82); }
+.keys b { color: var(--gold); }
+
+#endtitle { font-size: clamp(28px, 6vw, 58px); text-shadow: 0 5px 0 var(--gold-deep), 0 12px 20px rgba(0,0,0,.5); }
+#endsub { color: rgba(255,242,216,.8); margin: 0 0 6px; }
+
+@media (max-width: 720px) {
+  .menuside { display: none; }
+  .btn { min-width: 240px; }
+}

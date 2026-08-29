@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>ESCAPE TOGETHER - 2 player online co-op physics</title>
+<meta name="description" content="Two friends, one collapsing hotel, and physics that will betray you both. Free, in your browser, no download.">
+<link rel="stylesheet" href="css/ui.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏃</text></svg>">
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<!-- ------------------------------------------------------------- main menu -->
+<div id="menu" class="screen show">
+  <div class="brandwrap">
+    <div class="badges">
+      <span class="badge">2 PLAYER ONLINE CO-OP</span>
+      <span class="badge alt">NO DOWNLOAD</span>
+    </div>
+    <h1 class="logo">ESCAPE<span>TOGETHER</span></h1>
+    <p class="tagline">PHYSICS &nbsp;•&nbsp; CO-OP &nbsp;•&nbsp; CHAOS</p>
+    <p class="pitch">Two friends. One collapsing hotel. Everything you are about to do wrong.</p>
+  </div>
+
+  <div class="menucols">
+    <nav class="mainbuttons">
+      <button class="btn big" data-act="play">PLAY</button>
+      <button class="btn" data-act="create">CREATE ROOM</button>
+      <button class="btn" data-act="joinform">JOIN ROOM</button>
+      <button class="btn ghost" data-nav="scenarios">SCENARIOS</button>
+      <button class="btn ghost" data-nav="characters">CHARACTERS</button>
+      <button class="btn ghost" data-nav="store">STORE</button>
+      <button class="btn ghost" data-nav="creators">CREATORS</button>
+      <button class="btn ghost" data-nav="settings">SETTINGS</button>
+    </nav>
+    <div class="menuside">
+      <div class="pickedcard" id="pickedcard"></div>
+    </div>
+  </div>
+
+  <p class="status" id="status"></p>
+  <p class="footnote">A prototype. One scenario, two players, and a great deal of falling over.</p>
+</div>
+
+<!-- ----------------------------------------------------------- join a room -->
+<div id="joinform" class="screen panel">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>JOIN ROOM</h2>
+  <p class="sub">Type the five characters your friend sent you.</p>
+  <input id="codeinput" class="code" maxlength="5" placeholder="7XK29" autocomplete="off" spellcheck="false">
+  <button class="btn big" data-act="join">JOIN</button>
+  <p class="status" id="joinstatus"></p>
+</div>
+
+<!-- ---------------------------------------------------------------- lobby -->
+<div id="lobby" class="screen panel">
+  <h2>YOUR ROOM</h2>
+  <div class="codebox"><span id="roomcode">-----</span></div>
+  <button class="btn" data-act="copy">COPY INVITE LINK</button>
+  <p class="sub" id="lobbystate">Waiting for your friend to join…</p>
+  <div class="lobbyslots" id="lobbyslots"></div>
+  <div class="row">
+    <button class="btn ghost" data-nav="characters">CHANGE CHARACTER</button>
+    <button class="btn ghost" data-act="solo">START ANYWAY</button>
+  </div>
+  <button class="btn big" data-act="drop">ENTER THE HOTEL</button>
+  <button class="back" data-act="quit">&larr; LEAVE ROOM</button>
+</div>
+
+<!-- ----------------------------------------------------------- characters -->
+<div id="characters" class="screen panel wide">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>CHARACTERS</h2>
+  <p class="sub">Nobody is better at anything. They are only funnier in different ways.</p>
+  <div class="cards" id="charcards"></div>
+</div>
+
+<!-- ------------------------------------------------------------ scenarios -->
+<div id="scenarios" class="screen panel wide">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>SCENARIOS</h2>
+  <div class="cards" id="scenariocards"></div>
+  <div class="roadmap">
+    <h3>COMING SOON &nbsp;🌐&nbsp; ONLINE CO-OP</h3>
+    <p>Two players are just the beginning. Ideas we have not built yet:
+      more players, new scenarios, friend lists, creator tournaments,
+      community challenges, seasonal events.</p>
+    <p class="tiny">None of this exists yet. It is a plan, not a promise.</p>
+  </div>
+</div>
+
+<!-- ---------------------------------------------------------------- store -->
+<div id="store" class="screen panel wide">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>STORE</h2>
+  <p class="sub">The game is free. Nothing here makes you better at it - it is all hats.</p>
+  <div class="cards" id="storecards"></div>
+  <p class="tiny">Prototype: no payments are wired up and nothing here can be bought yet.</p>
+</div>
+
+<!-- ------------------------------------------------------------- creators -->
+<div id="creators" class="screen panel">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>BECOME A CREATOR CHARACTER</h2>
+  <p class="sub">Are you a streamer, YouTuber, TikToker or content creator?
+    Apply to become an official character in Escape Together.</p>
+  <form id="creatorform" class="form">
+    <label>CREATOR NAME<input name="name" required maxlength="40"></label>
+    <label>PLATFORM
+      <select name="platform">
+        <option>Twitch</option><option>YouTube</option><option>TikTok</option>
+        <option>Kick</option><option>Instagram</option><option>Other</option>
+      </select>
+    </label>
+    <label>SOCIAL LINK<input name="link" type="url" placeholder="https://" required></label>
+    <label>COUNTRY<input name="country" maxlength="40"></label>
+    <label>PROFILE PICTURE<input name="pfp" type="file" accept="image/*"></label>
+    <label>CHARACTER IDEA<textarea name="idea" rows="3" maxlength="400"
+      placeholder="A caffeinated hotel receptionist who will not stop smiling"></textarea></label>
+    <label>CATCHPHRASE<input name="catchphrase" maxlength="60" placeholder="WHY DID YOU THROW ME"></label>
+    <button class="btn big" type="submit">SEND APPLICATION</button>
+  </form>
+  <div class="perks">
+    <h3>APPROVED CREATORS GET</h3>
+    <ul>
+      <li>Their own playable character</li>
+      <li>Creator cosmetics</li>
+      <li>Creator emotes</li>
+      <li>A creator code &mdash; e.g. <code>FUNNYBOB</code></li>
+    </ul>
+    <p class="tiny">Not open yet. This form does not send anywhere in the prototype.</p>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------- settings -->
+<div id="settings" class="screen panel">
+  <button class="back" data-nav="menu">&larr; BACK</button>
+  <h2>SETTINGS</h2>
+  <label class="toggle"><input type="checkbox" id="setsound" checked> Sound effects</label>
+  <label class="toggle"><input type="checkbox" id="setstreamer"> Streamer mode
+    <span class="tiny">Hides your room code on screen so nobody can join your stream.</span></label>
+  <label class="toggle"><input type="checkbox" id="setshake" checked> Camera shake</label>
+  <div class="keys">
+    <h3>CONTROLS</h3>
+    <p><b>WASD</b> move &nbsp; <b>SPACE</b> jump &nbsp; <b>E</b> or <b>LEFT CLICK</b> grab</p>
+    <p><b>Q</b> or <b>RIGHT CLICK</b> brace &mdash; hold a plate down, or launch your friend</p>
+    <p><b>R</b> go limp, entirely at your own risk</p>
+    <p class="tiny">On a phone: left half of the screen steers, the buttons on the right do the rest.</p>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------ end screen -->
+<div id="endscreen" class="screen overlay">
+  <h2 id="endtitle">MISSION SUCCESSFULLY FAILED</h2>
+  <p id="endsub"></p>
+  <div class="row">
+    <button class="btn big" data-act="retry">RETRY</button>
+    <button class="btn ghost" data-act="quit">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- the in-game corner button -->
+<button id="pausebtn" data-nav="menu" title="Main menu">≡</button>
+
+<script src="vendor/matter.js"></script>
+<!-- Only used by the static build, where there is no room server: it
+     introduces the two browsers to each other and then gets out of the
+     way. No game traffic passes through it. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script type="module" src="js/main.mjs"></script>
+</body>
+</html>

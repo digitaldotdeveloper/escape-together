@@ -1,0 +1,16 @@
+{
+ "skin": "#dcd3cd",
+ "skinDark": "#b0a8a4",
+ "sleeve": "#a76a45",
+ "sleeveDark": "#855437",
+ "hand": "#dccea8",
+ "handDark": "#b0a486",
+ "trouser": "#3c4150",
+ "trouserDark": "#2e323e",
+ "shoe": "#2d2a25",
+ "shoeDark": "#211f1b",
+ "headW": 113,
+ "headH": 155,
+ "torsoW": 162,
+ "torsoH": 166
+}
