@@ -104,6 +104,7 @@ function attach(t, conn, handlers) {
 export function createRoom(handlers) {
   const Peer = requirePeer();
   let attempts = 0;
+  let networkRetries = 0;
 
   const open = (code) => {
     const peer = new Peer(PREFIX + code, peerOptions);
@@ -112,7 +113,21 @@ export function createRoom(handlers) {
     t.slot = 0;
     t.code = code;
 
-    peer.on('open', () => handlers.open && handlers.open(t));
+    // The free broker is occasionally slow or busy, and a lobby showing five
+    // dashes with no explanation looks like the game is broken rather than
+    // like it is waiting. Say what is happening, and give up out loud.
+    let opened = false;
+    handlers.status && handlers.status('CONTACTING MATCHMAKING…');
+    const giveUp = setTimeout(() => {
+      if (opened) return;
+      handlers.fail && handlers.fail('MATCHMAKING IS NOT ANSWERING - TRY AGAIN');
+    }, 15000);
+    peer.on('open', () => {
+      opened = true;
+      clearTimeout(giveUp);
+      handlers.status && handlers.status('');
+      handlers.open && handlers.open(t);
+    });
     peer.on('connection', (conn) => {
       // one guest only; a second knock is turned away rather than queued
       if (t.conn && t.conn.open) {
@@ -127,6 +142,16 @@ export function createRoom(handlers) {
         try { peer.destroy(); } catch {}
         return open(newCode());
       }
+      // a busy broker refuses the first connection surprisingly often; one
+      // retry after a breath turns most of those into a working room
+      if (e.type === 'network' && networkRetries++ < 2 && !opened) {
+        try { peer.destroy(); } catch {}
+        handlers.status && handlers.status('MATCHMAKING IS BUSY - RETRYING…');
+        setTimeout(() => open(code), 1500);
+        return;
+      }
+      if (opened && e.type === 'network') return;   // a lost broker after the
+      // room exists does not matter: the players are already talking directly
       handlers.fail && handlers.fail(errorText(e));
     });
     return t;
@@ -146,10 +171,15 @@ export function joinRoom(code, handlers) {
   t.code = code;
 
   let settled = false;
+  handlers.status && handlers.status('LOOKING FOR THAT ROOM…');
   peer.on('open', () => {
     const conn = peer.connect(PREFIX + code, { reliable: false, serialization: 'binary' });
     attach(t, conn, handlers);
-    conn.on('open', () => { settled = true; handlers.open && handlers.open(t); });
+    conn.on('open', () => {
+      settled = true;
+      handlers.status && handlers.status('');
+      handlers.open && handlers.open(t);
+    });
     // PeerJS never times out a connection to an id nobody is holding, so the
     // "wrong code" case has to be a clock rather than an error
     setTimeout(() => {

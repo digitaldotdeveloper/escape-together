@@ -269,7 +269,8 @@ function joinViaPeer(kind, code, char) {
       }
     },
 
-    fail: (why) => UI.setStatus(why),
+    status: (msg) => UI.setConnecting(msg),
+    fail: (why) => { UI.setConnecting(''); UI.setStatus(why); },
   };
 
   G.net = kind === 'create' ? P2P.createRoom(handlers) : P2P.joinRoom(code, handlers);

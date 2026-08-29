@@ -96,6 +96,18 @@ export const UI = {
     });
   },
 
+  /** What the connection is doing, shown where the room code will appear. */
+  setConnecting(msg) {
+    const box = $('#roomcode');
+    if (msg) {
+      box.dataset.waiting = '1';
+      $('#lobbystate').textContent = msg;
+      show('lobby');
+    } else if (box.dataset.waiting) {
+      delete box.dataset.waiting;
+    }
+  },
+
   setStatus(msg) { $('#status').textContent = msg || ''; $('#joinstatus').textContent = msg || ''; },
 
   setRoom(code, slot) {
