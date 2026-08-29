@@ -32,16 +32,33 @@ export async function loadChar(id) {
   if (CACHE.has(id)) return CACHE.get(id);
   const base = asset('char/' + id + '/');
   const p = (async () => {
-    const [head, torso, palette] = await Promise.all([
+    const [head, torso, palette, hero, poses] = await Promise.all([
       loadImage(base + 'head.webp'),
       loadImage(base + 'torso.webp'),
       fetch(base + 'palette.json').then((r) => r.json()).catch(() => ({})),
+      loadImage(asset('hero/' + id + '.webp')),
+      loadPoses(base + 'poses/'),
     ]);
-    const hero = await loadImage(asset('hero/' + id + '.webp'));
-    return { id, head, torso, hero, pal: palette };
+    return { id, head, torso, hero, poses, pal: palette };
   })();
   CACHE.set(id, p);
   return p;
+}
+
+/** The drawn pose set. Null for a character that has not been drawn yet - the
+ *  old jointed rendering is still there underneath as the fallback. */
+async function loadPoses(base) {
+  let meta;
+  try {
+    meta = await fetch(base + 'poses.json').then((r) => (r.ok ? r.json() : null));
+  } catch { return null; }
+  if (!meta || !meta.order || !meta.order.length) return null;
+  const img = {};
+  await Promise.all(meta.order.map(async (name) => {
+    const im = await loadImage(base + name + '.webp');
+    if (im) img[name] = im;
+  }));
+  return { meta, img };
 }
 
 export function preloadCast() {
@@ -102,6 +119,108 @@ function sprite(ctx, img, body, scale, dx = 0, dy = 0) {
   ctx.rotate(body.angle);
   ctx.drawImage(img, -w / 2 + dx, -h / 2 + dy, w, h);
   ctx.restore();
+}
+
+/* --------------------------------------------------------------- posing */
+
+// How tall the drawn character stands, in world units. The jointed body is
+// about 104 from crown to sole; the art reads better a little larger than the
+// collision shape, which is normal - you aim at what you see, and a sprite
+// slightly bigger than its hitbox feels generous rather than unfair.
+const CHAR_H = 118;
+const memory = new WeakMap();
+
+/** What this character is doing, expressed as one of the drawn poses. */
+export function poseFor(rd, dt) {
+  let m = memory.get(rd);
+  if (!m) { m = { land: 0, air: false }; memory.set(rd, m); }
+  const t = rd.parts.torso;
+  const moving = Math.abs(t.velocity.x) > 0.7;
+  const airborne = !rd.grounded;
+
+  // a landing is a moment, not a state, so it has to be remembered briefly
+  if (m.air && !airborne) m.land = 0.22;
+  m.air = airborne;
+  m.land = Math.max(0, m.land - (dt || 0.016));
+
+  if (rd.stun > 0 || rd.limp > 0) return 'stunned';
+  if (airborne) return t.velocity.y < -1.2 ? 'jump' : 'fall';
+  if (m.land > 0) return 'land';
+  if (rd.bracing) return 'brace';
+  if (rd.grabs && (rd.grabs.F || rd.grabs.B)) return moving ? 'push' : 'carry';
+  if (moving) {
+    const f = Math.floor(rd.phase / (Math.PI / 2)) & 3;
+    return ['walk1', 'walk2', 'walk3', 'walk4'][f];
+  }
+  return 'idle';
+}
+
+/** Draw the character as one drawn pose. Returns false if there is no art. */
+export function drawPosed(ctx, rd, art, dt) {
+  const set = art.poses;
+  if (!set) return false;
+  const name = poseFor(rd, dt);
+  const p = set.meta.poses[name] || set.meta.poses.idle;
+  const img = set.img[name] || set.img.idle;
+  if (!p || !img) return false;
+
+  const m = set.meta;
+  const scale = CHAR_H / m.refH;
+  const parts = rd.parts;
+
+  // Anchor on the feet, not the middle: every pose was drawn standing on the
+  // same line, so the feet are the one point they all agree about.
+  const feet = Math.max(parts.shinB.bounds.max.y, parts.shinF.bounds.max.y);
+  const ax = parts.torso.position.x * 0.7
+    + ((parts.shinB.position.x + parts.shinF.position.x) / 2) * 0.3;
+  const ay = feet;
+
+  const loose = name === 'stunned' || name === 'fall';
+  const lean = loose
+    ? parts.torso.angle
+    : Math.max(-0.4, Math.min(0.4, parts.torso.angle));
+
+  // contact shadow
+  ctx.save();
+  ctx.globalAlpha = 0.22;
+  ctx.beginPath();
+  ctx.ellipse(ax, ay + 4, 30, 7, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#000';
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(lean);
+  if (rd.facing < 0) ctx.scale(-1, 1);
+  const dx = (p.x - m.canvas[0] / 2) * scale;
+  const dy = (p.y - m.refFootY) * scale;
+  ctx.drawImage(img, dx, dy, p.w * scale, p.h * scale);
+  ctx.restore();
+
+  // what the hands are holding, so a grab is still legible
+  for (const side of ['B', 'F']) {
+    const c = rd.grabs && rd.grabs[side];
+    if (!c) continue;
+    const hand = endOf(parts['farm' + side], 1);
+    ctx.beginPath();
+    ctx.arc(hand.x, hand.y, 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,225,140,0.9)';
+    ctx.fill();
+  }
+
+  if (rd.stun > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.font = 'bold 15px system-ui';
+    ctx.fillStyle = '#ffd85e';
+    for (let i = 0; i < 3; i++) {
+      const a = (Date.now() / 240) + (i * Math.PI * 2) / 3;
+      ctx.fillText('*', ax + Math.cos(a) * 22 - 4, ay - 96 + Math.sin(a) * 7);
+    }
+    ctx.restore();
+  }
+  return true;
 }
 
 /* -------------------------------------------------------------- the whole */

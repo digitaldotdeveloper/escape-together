@@ -18,6 +18,7 @@ import {
   makeRagdoll, addRagdoll, stepRagdoll, tryGrab, releaseGrab, enforceGrabs,
   PART_NAMES,
 } from './ragdoll.mjs';
+import { botInput, botRescue, BOT_FOLLOW, BOT_WAIT } from './bot.mjs';
 
 export const TICK_HZ = 60;
 export const SEND_HZ = 30;
@@ -75,6 +76,9 @@ export function createSim(Matter, { authority = false } = {}) {
     // the room is created, so a pair who spend two minutes choosing characters
     // walk in with six minutes left and no idea why.
     started: false,
+    // Solo play: slot 1 is driven by the partner instead of by a person.
+    bot: false,
+    botMode: BOT_FOLLOW,
     timeLeft: ROUND_SECONDS * TICK_HZ,
     shake: 0,
     beat: 0,
@@ -85,6 +89,9 @@ export function createSim(Matter, { authority = false } = {}) {
     authority,
     debrisTimer: 240,
     liftRiders: [],
+    sprinklers: 0,
+    wasWet: false,
+    botAnchor: null,
   };
 
   /* ------------------------------------------------------------- mechanisms */
@@ -115,7 +122,47 @@ export function createSim(Matter, { authority = false } = {}) {
     return load;
   }
 
+  /* Anything on the wall you can press. A hand within reach plus the grab
+   * button, edge-triggered so leaning on one does not strobe it. */
+  function stepSwitches() {
+    for (const sw of mech.switches) {
+      for (let i = 0; i < 2; i++) {
+        if (!sim.connected[i]) continue;
+        const rd = players[i];
+        let touched = false;
+        for (const side of ['B', 'F']) {
+          const hand = rd.parts['farm' + side].position;
+          if (Math.hypot(hand.x - sw.x, hand.y - sw.y) < 50) touched = true;
+        }
+        // Edge-triggered on the button, NOT on a cooldown. A cooldown means
+        // standing next to a light switch with GRAB held strobes it twice a
+        // second, which is not a light switch, it is a nightclub.
+        const pressing = touched && !!sim.inputs[i].grab;
+        const was = sw.held && sw.held[i];
+        if (!sw.held) sw.held = [false, false];
+        sw.held[i] = pressing;
+        if (!pressing || was) continue;
+        sw.on = !sw.on;
+        emit('press', { id: sw.id, on: sw.on, x: sw.x, y: sw.y });
+
+        if (sw.id === 'alarm' && sw.on) sim.sprinklers = 60 * 22;
+        if (sw.id === 'vend' && sw.on) {
+          // a can, from the debris pool, straight at your shins
+          const can = mech.debris[(debrisNext++) % mech.debris.length];
+          Body.setStatic(can, false);
+          Body.setPosition(can, { x: sw.x - 30, y: sw.y + 60 });
+          Body.setVelocity(can, { x: -3.5, y: -2 });
+          Body.setAngularVelocity(can, -0.3);
+          can.plugin.parked = false;
+          sw.on = false;   // it is a button, not a latch
+        }
+      }
+    }
+  }
+
   function stepMechanisms() {
+    stepSwitches();
+    if (sim.sprinklers > 0) sim.sprinklers--;
     // --- pressure plate -> emergency shutter -------------------------------
     mech.plateLoad = totalLoadOn(mech.plate, 150, 70);
     const wantOpen = mech.plateLoad >= PLATE_NEEDS ? 1 : 0;
@@ -194,6 +241,18 @@ export function createSim(Matter, { authority = false } = {}) {
       }
     }
     mech.lift.plugin.lastY = mech.lift.position.y;
+
+    // Wet floor. Pulling the alarm soaks everything, and a soaked floor is a
+    // very funny place to try to carry a wardrobe.
+    const wet = sim.sprinklers > 0;
+    if (wet !== sim.wasWet) {
+      sim.wasWet = wet;
+      for (const b of Composite.allBodies(world)) {
+        if (b.plugin.kind === 'wall' || b.plugin.kind === 'crumble') {
+          b.friction = wet ? 0.16 : 0.9;
+        }
+      }
+    }
 
     // --- the building slowly gives up ---------------------------------------
     if (!sim.started) return;
@@ -296,6 +355,16 @@ export function createSim(Matter, { authority = false } = {}) {
   };
 
   sim.step = () => {
+    // the partner decides what it is doing before anybody moves
+    if (sim.bot && sim.connected[1]) {
+      sim.setInput(1, botInput(sim, 1, 0, sim.botMode));
+      if (botRescue(sim, 1, 0)) {
+        const t = players[0].parts.torso.position;
+        sim.checkpoint[1] = { x: t.x - 40, y: Math.min(t.y, FLOOR1 - 60) };
+        respawn(1, 'lost');
+      }
+    }
+
     for (let i = 0; i < 2; i++) {
       const rd = players[i];
       const input = sim.connected[i] ? sim.inputs[i] : EMPTY_INPUT;
@@ -316,6 +385,24 @@ export function createSim(Matter, { authority = false } = {}) {
     }
 
     boosts();
+
+    // WAIT means WAIT, at this spot. Bracing alone is not enough: the human
+    // walks into it, or grabs it, and the partner ends up sixty units from the
+    // plate it was told to stand on - which is exactly the moment the puzzle
+    // stops working and the player blames the game. So it remembers where it
+    // was standing and leans back toward it.
+    if (sim.bot && sim.botMode === 1 && sim.connected[1]) {
+      const rd = players[1];
+      if (sim.botAnchor === null) sim.botAnchor = rd.parts.torso.position.x;
+      const err = sim.botAnchor - rd.parts.torso.position.x;
+      const pull = Math.max(-1.6, Math.min(1.6, err * 0.12));
+      for (const name of ['torso', 'thighB', 'thighF', 'shinB', 'shinF']) {
+        const b = rd.parts[name];
+        Body.setVelocity(b, { x: b.velocity.x * 0.5 + pull, y: b.velocity.y });
+      }
+    } else {
+      sim.botAnchor = null;
+    }
 
     stepMechanisms();
     Matter.Engine.update(engine, 1000 / TICK_HZ);
@@ -361,7 +448,7 @@ export function createSim(Matter, { authority = false } = {}) {
 
   /* -------------------------------------------------------------- snapshots */
 
-  const HEAD = 9;
+  const HEAD = 10;
   const PER_BODY = 6;
   const PER_PLAYER = 14;
   const FLOATS = HEAD + netBodies.length * PER_BODY + 2 * PER_PLAYER;
@@ -378,7 +465,10 @@ export function createSim(Matter, { authority = false } = {}) {
     f[5] = mech.plateLoad;
     f[6] = sim.beat;
     f[7] = sim.shake;
-    f[8] = sim.started ? 1 : 0;
+    f[8] = (sim.started ? 1 : 0) + (sim.bot ? 2 : 0) + (sim.botMode ? 4 : 0);
+    let bits = sim.sprinklers > 0 ? 1 : 0;
+    mech.switches.forEach((sw, i) => { if (sw.on) bits |= 2 << i; });
+    f[9] = bits;
 
     let o = HEAD;
     for (const b of netBodies) {
@@ -409,7 +499,13 @@ export function createSim(Matter, { authority = false } = {}) {
     mech.plateLoad = f[5];
     sim.beat = f[6];
     sim.shake = f[7];
-    sim.started = f[8] > 0.5;
+    const flags = Math.round(f[8]);
+    sim.started = !!(flags & 1);
+    sim.bot = !!(flags & 2);
+    sim.botMode = (flags & 4) ? 1 : 0;
+    const bits = Math.round(f[9]);
+    sim.sprinklers = (bits & 1) ? 1 : 0;
+    mech.switches.forEach((sw, i) => { sw.on = !!(bits & (2 << i)); });
 
     let o = HEAD;
     for (const b of netBodies) {

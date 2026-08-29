@@ -217,6 +217,27 @@ export function buildLevel(Matter, world) {
   mech.lift = lift;
   mech.liftPos = 0;          // 0 = below the floor, 1 = arrived
 
+  // ---- things on the wall that can be pressed -----------------------------
+  // Not puzzle pieces. A room you can only walk through is a corridor; a room
+  // where the lights go off when you lean on the wall is a place two people
+  // will muck about in for a minute before getting on with escaping, and that
+  // minute is most of what makes it feel like a game rather than a test.
+  // Mounted at hand height, not at the height a real light switch would be.
+  // A character's hands hang around 60 above the floor and the upward pull on
+  // them is capped on purpose - two hand springs with no cap are a pair of
+  // helicopter blades - so anything higher than this simply cannot be touched.
+  mech.switches = [
+    { id: 'lights', x: 905,  y: FLOOR1 - 76, w: 22, h: 34, on: true,
+      label: 'LIGHTS' },
+    { id: 'tv',     x: 668,  y: FLOOR1 - 74, w: 26, h: 26, on: false,
+      label: 'TV' },
+    { id: 'alarm',  x: 1105, y: FLOOR1 - 78, w: 26, h: 40, on: false,
+      label: 'ALARM' },
+    { id: 'vend',   x: 4700, y: FLOOR2 - 76, w: 28, h: 34, on: false,
+      label: 'SNACK' },
+  ];
+  for (const sw of mech.switches) sw.held = [false, false];
+
   // ---- falling debris, pre-made and parked off-stage ----------------------
   // Pre-made because a fixed body list keeps the network snapshot a plain
   // array of numbers. Nothing is ever spawned mid-match.

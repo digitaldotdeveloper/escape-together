@@ -7,7 +7,7 @@
  * because the screen will not let you.
  */
 
-import { drawCharacter } from './art.mjs';
+import { drawCharacter, drawPosed } from './art.mjs';
 
 export const CAM = {
   x: 400, y: 480, zoom: 1,
@@ -384,6 +384,57 @@ export function drawWorld(ctx, sim, view, arts, bgs, ui) {
     propArt(ctx, b, b.plugin.kind);
   }
 
+  // ---- the things you can press -----------------------------------------
+  for (const sw of sim.mech.switches) {
+    ctx.save();
+    ctx.translate(sw.x, sw.y);
+    // backplate
+    ctx.fillStyle = '#4a4038';
+    ctx.beginPath();
+    ctx.roundRect(-sw.w / 2, -sw.h / 2, sw.w, sw.h, 5);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.stroke();
+    // the button itself
+    const lit = sw.id === 'alarm' ? sw.on : sw.on;
+    ctx.beginPath();
+    ctx.roundRect(-sw.w / 2 + 4, -sw.h / 2 + 4, sw.w - 8, sw.h - 8, 3);
+    ctx.fillStyle = sw.id === 'alarm'
+      ? (sw.on ? '#ff5a3a' : '#c0392b')
+      : lit ? '#ffd85e' : '#6d6257';
+    ctx.fill();
+    if (lit) {
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.arc(0, 0, sw.w, 0, Math.PI * 2);
+      ctx.fillStyle = sw.id === 'alarm' ? '#ff5a3a' : '#ffd85e';
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+
+    // say what it is, once somebody is close enough to press it
+    let near = false;
+    for (let i = 0; i < 2; i++) {
+      if (!sim.connected[i]) continue;
+      const t = sim.players[i].parts.torso.position;
+      if (Math.hypot(t.x - sw.x, t.y - sw.y) < 96) near = true;
+    }
+    if (near) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = '900 11px system-ui, sans-serif';
+      const beat = 0.6 + 0.4 * Math.sin(Date.now() / 240);
+      ctx.fillStyle = 'rgba(255,216,94,' + beat + ')';
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+      ctx.lineWidth = 4;
+      ctx.strokeText(sw.label, sw.x, sw.y - sw.h / 2 - 10);
+      ctx.fillText(sw.label, sw.x, sw.y - sw.h / 2 - 10);
+      ctx.restore();
+    }
+  }
+
   // the plate glows when it is doing its job - a mechanism you cannot read is
   // not a puzzle, it is a bug report
   const plate = sim.mech.plate;
@@ -409,7 +460,12 @@ export function drawWorld(ctx, sim, view, arts, bgs, ui) {
   for (let i = 0; i < 2; i++) {
     if (!sim.connected[i]) continue;
     const art = arts[i];
-    if (art) drawCharacter(ctx, sim.players[i], art);
+    if (!art) continue;
+    // Drawn poses when the character has them; the old jointed rendering is
+    // the fallback for anyone not yet drawn.
+    if (!drawPosed(ctx, sim.players[i], art, ui.dt)) {
+      drawCharacter(ctx, sim.players[i], art);
+    }
   }
 
   // The boost is the one thing nobody works out on their own, so the game says
@@ -465,6 +521,47 @@ export function drawWorld(ctx, sim, view, arts, bgs, ui) {
     ctx.lineWidth = 4;
     ctx.strokeText(label, t.x, t.y - 62);
     ctx.fillText(label, t.x, t.y - 62);
+    ctx.restore();
+  }
+}
+
+/** The room with the lights off, and the water coming down. Both are drawn
+ *  over the world and under the HUD, because they are things happening to the
+ *  room rather than things in it. */
+export function drawRoomState(ctx, sim, view, dt) {
+  const lights = sim.mech.switches.find((s) => s.id === 'lights');
+  const alarm = sim.mech.switches.find((s) => s.id === 'alarm');
+
+  if (lights && !lights.on) {
+    // not pitch black: dim, blue, and lit by whatever is still on
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = '#4a5a86';
+    ctx.fillRect(CAM.x - 2400, CAM.y - 1400, 4800, 2800);
+    ctx.restore();
+  }
+
+  if (sim.sprinklers > 0) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180,220,255,0.55)';
+    ctx.lineWidth = 1.4;
+    const t = Date.now() / 90;
+    for (let i = 0; i < 120; i++) {
+      const x = CAM.x - 700 + ((i * 137.5 + t * 3) % 1400);
+      const y = CAM.y - 500 + ((i * 91.7 + t * 46) % 1000);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x - 1.5, y + 13);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (alarm && alarm.on) {
+    ctx.save();
+    ctx.globalAlpha = 0.10 + 0.10 * Math.sin(Date.now() / 130);
+    ctx.fillStyle = '#ff3b1f';
+    ctx.fillRect(CAM.x - 2400, CAM.y - 1400, 4800, 2800);
     ctx.restore();
   }
 }

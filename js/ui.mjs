@@ -112,6 +112,15 @@ export const UI = {
 
   setRoom(code, slot) {
     $('#roomcode').textContent = code;
+    if (UI.soloWanted) {
+      // no lobby, no waiting: they said they were playing alone
+      UI.soloWanted = false;
+      UI.cb.onSolo();
+      hideAll();
+      document.body.classList.add('playing');
+      UI.cb.onStart();
+      return;
+    }
     show('lobby');
   },
 
@@ -165,6 +174,12 @@ function act(what) {
       cb.onPlay('create', null, UI.picked);
       break;
     case 'create':
+      UI.soloWanted = false;
+      cb.onPlay('create', null, UI.picked);
+      break;
+    case 'solomode':
+      // straight into the hotel on your own, with the partner
+      UI.soloWanted = true;
       cb.onPlay('create', null, UI.picked);
       break;
     case 'joinform':

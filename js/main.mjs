@@ -18,6 +18,7 @@ import { createInput } from './input.mjs';
 import { loadChar, preloadCast, CAST } from './art.mjs';
 import {
   CAM, updateCamera, applyCamera, screenToWorld, drawWorld, drawDust,
+  drawRoomState,
 } from './render.mjs';
 import { UI } from './ui.mjs';
 import { wake, setMusic, setEnabled, audio, sfx } from './audio.mjs';
@@ -50,6 +51,7 @@ const sfxMap = {
   rumble: () => sfx.rumble(),
   shutterSlam: () => sfx.slam(),
   liftHere: () => sfx.ding(),
+  press: (ev) => (ev.id === 'alarm' && ev.on ? sfx.alarm() : sfx.click()),
 };
 
 /* ------------------------------------------------------------------- state */
@@ -139,7 +141,7 @@ function syncEndScreen() {
 function handleEvent(ev) {
   G.tutorial.noteEvent(ev);
   const play = sfxMap[ev.type];
-  if (play) play();
+  if (play) play(ev);
   if (ev.type === 'yeet') moment('yeet');
   if (ev.type === 'respawn' && ev.why === 'fell') moment('fell');
   // escaped / collapsed are deliberately NOT handled here: they are read off
@@ -392,7 +394,9 @@ function frame(now) {
   ctx.fillRect(0, 0, view.w, view.h);
   ctx.save();
   applyCamera(ctx, view);   // applies the device pixel ratio itself
-  drawWorld(ctx, G.sim, view, G.arts, G.bgs, { slot: G.slot, peerName: UI.peerName });
+  drawWorld(ctx, G.sim, view, G.arts, G.bgs,
+    { slot: G.slot, peerName: UI.peerName, dt });
+  drawRoomState(ctx, G.sim, view, dt);
   drawDust(ctx, dt, G.sim.shake);
   ctx.restore();
 
@@ -411,6 +415,16 @@ function playMoment() {
     G.firstSnap = true;
   }
 }
+
+/** WAIT here / come with me. The whole of the partner's intelligence. */
+function toggleBot() {
+  const next = G.sim.botMode ? 0 : 1;
+  if (G.authority) G.sim.botMode = next;
+  else G.net && G.net.send({ t: 'botmode', mode: next });
+  G.sim.botMode = next;
+  sfx.tick();
+}
+window.__toggleBot = toggleBot;
 
 /* -------------------------------------------------------------------- HUD */
 
@@ -538,6 +552,7 @@ function drawHUD(dt) {
     || matchMedia('(pointer: coarse)').matches
     || navigator.maxTouchPoints > 0;
   if (coarse) drawTouchUI(dt, G.tutorial.currentId());
+  if (G.sim.bot) drawBotOrder(coarse);
   G.tutorial.draw(ctx, view, coarse, !G.sim.connected[1 - G.slot]);
 }
 
@@ -589,6 +604,35 @@ function glyph(kind, x, y, r, colour) {
     ctx.stroke();
   }
   ctx.restore();
+}
+
+/** Playing alone: the partner's current order, and how to change it. */
+function drawBotOrder(coarse) {
+  const waiting = !!G.sim.botMode;
+  const w = view.w, h = view.h;
+  const L = controlLayout(view);
+  const bx = coarse ? L.stickHome.x + L.stickMax + 44 : 92;
+  const by = coarse ? L.stickHome.y - L.stickMax - 26 : h - 54;
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = '900 12px system-ui, sans-serif';
+  const label = waiting ? 'PARTNER: WAITING' : 'PARTNER: FOLLOWING';
+  const pw = ctx.measureText(label).width + 26;
+  ctx.fillStyle = 'rgba(24,14,16,0.72)';
+  ctx.beginPath();
+  ctx.roundRect(bx - pw / 2, by - 15, pw, 30, 15);
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = waiting ? 'rgba(125,255,154,0.75)' : 'rgba(255,216,94,0.55)';
+  ctx.stroke();
+  ctx.fillStyle = waiting ? '#7dff9a' : '#ffd85e';
+  ctx.fillText(label, bx, by + 4);
+  ctx.font = '600 10px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255,242,216,0.5)';
+  ctx.fillText(coarse ? 'tap to swap' : 'press F', bx, by + 24);
+  ctx.restore();
+  G.botButton = { x: bx, y: by, w: pw, h: 30 };
 }
 
 function drawTouchUI(dt, highlight) {
@@ -742,10 +786,15 @@ function drawMenuScene(dt) {
   // skipping the tutorial, by key or by tapping the corner of its card
   addEventListener('keydown', (e) => {
     if (e.code === 'KeyT' && G.playing) G.tutorial.skip();
+    if (e.code === 'KeyF' && G.playing && G.sim.bot) toggleBot();
   });
   canvas.addEventListener('pointerdown', (e) => {
     const r = canvas.getBoundingClientRect();
-    if (G.tutorial.hitSkip(e.clientX - r.left, e.clientY - r.top)) G.tutorial.skip();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    if (G.tutorial.hitSkip(px, py)) G.tutorial.skip();
+    const b = G.botButton;
+    if (G.sim.bot && b && Math.abs(px - b.x) < b.w / 2 + 10
+        && Math.abs(py - b.y) < b.h / 2 + 14) toggleBot();
   });
 
   orientation.watch(document.getElementById('rotate'));
@@ -769,7 +818,7 @@ function drawMenuScene(dt) {
       else G.net && G.net.send({ t: 'start' });
     },
     onSolo: () => {
-      if (G.authority) G.sim.connected = [true, true];
+      if (G.authority) { G.sim.connected = [true, true]; G.sim.bot = true; }
       else G.net && G.net.send({ t: 'solo' });
     },
     onRetry: () => {

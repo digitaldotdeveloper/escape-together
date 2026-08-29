@@ -50,7 +50,11 @@ const now = () => (ctx ? ctx.currentTime : 0);
 
 function tone({ freq, dur = 0.2, type = 'square', gain = 0.1, at = 0, to, attack = 0.005,
                 dest = null, detune = 0 }) {
-  if (!ctx || !audio.soundOn) return;
+  // Music must not be silenced by the SOUND EFFECTS switch. Both used to go
+  // through the same soundOn check, so turning off the sound effects took the
+  // soundtrack with it.
+  if (!ctx) return;
+  if (dest === musicGain ? !audio.musicOn : !audio.soundOn) return;
   const t = now() + at;
   const o = ctx.createOscillator();
   const g = ctx.createGain();
@@ -68,7 +72,8 @@ function tone({ freq, dur = 0.2, type = 'square', gain = 0.1, at = 0, to, attack
 }
 
 function noise({ dur = 0.2, gain = 0.12, at = 0, band = 0, q = 1, dest = null }) {
-  if (!ctx || !audio.soundOn) return;
+  if (!ctx) return;
+  if (dest === musicGain ? !audio.musicOn : !audio.soundOn) return;
   const t = now() + at;
   const n = Math.max(1, Math.floor(ctx.sampleRate * dur));
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);
@@ -144,6 +149,19 @@ export const sfx = {
     tone({ freq: 1319, dur: 0.7, type: 'sine', gain: 0.09, at: 0.13 });
   },
 
+  /** a switch, a button, a thing on a wall */
+  click() {
+    tone({ freq: 900, dur: 0.05, type: 'square', gain: 0.07 });
+    tone({ freq: 420, dur: 0.07, type: 'square', gain: 0.05, at: 0.04 });
+  },
+  /** somebody pulled the fire alarm */
+  alarm() {
+    for (let i = 0; i < 5; i++) {
+      tone({ freq: 780, to: 980, dur: 0.16, type: 'square', gain: 0.09, at: i * 0.34 });
+      tone({ freq: 980, to: 780, dur: 0.16, type: 'square', gain: 0.09, at: i * 0.34 + 0.17 });
+    }
+  },
+
   /** a step done in the tutorial */
   tick() { tone({ freq: 760, dur: 0.09, type: 'square', gain: 0.06 }); },
   goodJob() {
@@ -184,7 +202,10 @@ let musicMode = 'menu';
 export function setMusic(mode) {
   musicMode = mode;                       // 'menu' | 'game' | 'off'
   if (!ctx) return;
-  const want = mode === 'off' || !audio.musicOn ? 0 : (mode === 'menu' ? 0.16 : 0.13);
+  // These are multiplied by each note's own gain and then by the master, so a
+  // value that looks reasonable here ends up around -34dB and nobody can hear
+  // a thing on a phone speaker. Measured, not guessed.
+  const want = mode === 'off' || !audio.musicOn ? 0 : (mode === 'menu' ? 0.62 : 0.5);
   musicGain.gain.cancelScheduledValues(now());
   musicGain.gain.linearRampToValueAtTime(want, now() + 0.8);
 }
@@ -219,27 +240,27 @@ function playStep(i, at) {
   if (eighth % 2 === 0) {
     const root = chord[0] - 24 + (eighth === 4 ? 7 : 0);
     tone({ freq: hz(root), dur: 0.28, type: urgent ? 'sawtooth' : 'triangle',
-      gain: 0.16, at: at - now(), dest: musicGain });
+      gain: 0.24, at: at - now(), dest: musicGain });
   }
   // off-beat chord stabs, the lounge piano
   if (eighth === 1 || eighth === 3 || eighth === 6) {
     for (const n of chord) {
-      tone({ freq: hz(n + 12), dur: 0.16, type: 'triangle', gain: 0.05,
+      tone({ freq: hz(n + 12), dur: 0.16, type: 'triangle', gain: 0.085,
         at: at - now(), dest: musicGain, detune: (Math.random() - 0.5) * 6 });
     }
   }
   // shaker
-  noise({ dur: 0.05, gain: eighth % 2 ? 0.02 : 0.035, band: 7000, q: 1.4,
+  noise({ dur: 0.05, gain: eighth % 2 ? 0.035 : 0.055, band: 7000, q: 1.4,
     at: at - now(), dest: musicGain });
   // kick
   if (eighth === 0 || eighth === 4 || (urgent && eighth === 6)) {
-    tone({ freq: 110, to: 44, dur: 0.16, type: 'sine', gain: 0.22,
+    tone({ freq: 110, to: 44, dur: 0.16, type: 'sine', gain: 0.34,
       at: at - now(), dest: musicGain });
   }
   // once things are bad, a siren-ish top line arrives
   if (game && urgent && eighth === 7) {
     tone({ freq: hz(chord[2] + 24), to: hz(chord[2] + 19), dur: 0.3, type: 'square',
-      gain: 0.035, at: at - now(), dest: musicGain });
+      gain: 0.06, at: at - now(), dest: musicGain });
   }
 }
 
