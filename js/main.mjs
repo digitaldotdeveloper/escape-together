@@ -20,6 +20,9 @@ import {
   CAM, updateCamera, applyCamera, screenToWorld, drawWorld, drawDust,
 } from './render.mjs';
 import { UI } from './ui.mjs';
+import { wake, setMusic, setEnabled, audio, sfx } from './audio.mjs';
+import { createTutorial } from './tutorial.mjs';
+import { controlLayout } from './input.mjs';
 
 const Matter = window.Matter;
 const canvas = document.getElementById('game');
@@ -36,40 +39,16 @@ function resize() {
 addEventListener('resize', resize);
 
 /* ------------------------------------------------------------------ sounds */
-// Everything is synthesised. The brief asks for no copyrighted music, and a
-// game about falling over needs about six noises, not a soundtrack.
-const AC = window.AudioContext || window.webkitAudioContext;
-let actx = null;
-const sfx = {
-  on: true,
-  wake() { if (!actx && AC) actx = new AC(); if (actx && actx.state === 'suspended') actx.resume(); },
-  blip(freq, dur, type = 'square', gain = 0.05, slideTo) {
-    if (!actx || !sfx.on) return;
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, actx.currentTime);
-    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, actx.currentTime + dur);
-    g.gain.setValueAtTime(gain, actx.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0008, actx.currentTime + dur);
-    o.connect(g).connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + dur + 0.02);
-  },
-  noise(dur, gain = 0.09) {
-    if (!actx || !sfx.on) return;
-    const n = actx.sampleRate * dur;
-    const b = actx.createBuffer(1, n, actx.sampleRate);
-    const d = b.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
-    const s = actx.createBufferSource(); const g = actx.createGain();
-    s.buffer = b; g.gain.value = gain;
-    s.connect(g).connect(actx.destination); s.start();
-  },
-  boost() { sfx.blip(180, 0.28, 'square', 0.06, 900); },
-  yeet() { sfx.blip(660, 0.35, 'sawtooth', 0.05, 130); },
-  thud() { sfx.noise(0.22, 0.12); },
-  creak() { sfx.blip(90, 0.5, 'sawtooth', 0.025, 62); },
-  ding() { sfx.blip(880, 0.4, 'sine', 0.06); setTimeout(() => sfx.blip(1320, 0.5, 'sine', 0.05), 110); },
-  slam() { sfx.noise(0.34, 0.18); sfx.blip(70, 0.3, 'square', 0.06, 40); },
+// All of it is synthesised in audio.mjs - no files, no copyrighted music.
+const sfxMap = {
+  boost: () => sfx.slideUp(),
+  yeet: () => sfx.slideDown(),
+  respawn: () => sfx.splat(),
+  tileGo: () => sfx.crash(),
+  creak: () => sfx.creak(),
+  rumble: () => sfx.rumble(),
+  shutterSlam: () => sfx.slam(),
+  liftHere: () => sfx.ding(),
 };
 
 /* ------------------------------------------------------------------- state */
@@ -84,6 +63,7 @@ const G = {
   playing: false,
   solo: false,
   authority: false,     // true when THIS browser is running the simulation
+  tutorial: createTutorial(),
   firstSnap: true,
   history: [],          // ring buffer of snapshots, for the replay
   moment: null,         // { until, caption, frames, i }
@@ -127,7 +107,7 @@ function moment(kind) {
     holdFor: 46,
     done: false,
   };
-  sfx.thud();
+  sfx.splat();
 }
 
 /* ------------------------------------------------------------------ netcode */
@@ -141,19 +121,13 @@ function handleSnapshot(f) {
 }
 
 function handleEvent(ev) {
-  switch (ev.type) {
-    case 'boost': sfx.boost(); break;
-    case 'yeet': sfx.yeet(); moment('yeet'); break;
-    case 'respawn': sfx.thud(); if (ev.why === 'fell') moment('fell'); break;
-    case 'tileGo': sfx.noise(0.3, 0.1); break;
-    case 'creak': sfx.creak(); break;
-    case 'rumble': sfx.noise(0.5, 0.05); break;
-    case 'shutterSlam': sfx.slam(); break;
-    case 'liftHere': sfx.ding(); break;
-    case 'escaped': sfx.ding(); UI.showEnd(true); break;
-    case 'collapsed': moment('collapsed'); UI.showEnd(false); break;
-    case 'beat': break;
-  }
+  G.tutorial.noteEvent(ev);
+  const play = sfxMap[ev.type];
+  if (play) play();
+  if (ev.type === 'yeet') moment('yeet');
+  if (ev.type === 'respawn' && ev.why === 'fell') moment('fell');
+  if (ev.type === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true); }
+  if (ev.type === 'collapsed') { sfx.fail(); moment('collapsed'); UI.showEnd(false); }
 }
 
 /** Start a fresh hotel. `authority` decides whether this copy is in charge. */
@@ -173,7 +147,7 @@ async function setChar(slot, id) {
 }
 
 function join(kind, code, char) {
-  sfx.wake();
+  wake();
   if (G.net) G.net.close();
   G.moment = null;
   G.history = [];
@@ -332,6 +306,12 @@ function advance(dt) {
     if (!G.authority) G.net && G.net.sendInput(cmd);
   }
 
+  G.tutorial.update(G.sim, G.slot, cmd, dt);
+  // the vamp gets faster and nastier as the clock runs down
+  audio.intensity = G.sim.started
+    ? 1 - Math.max(0, Math.min(1, G.sim.timeLeft / (480 * TICK_HZ)))
+    : 0;
+
   if (G.moment) { playMoment(); return; }
 
   stepAcc += dt;
@@ -475,14 +455,17 @@ function drawHUD(dt) {
 
   // the controls, for the first half minute, because the brief says thirty
   // seconds to understand and a control list is the cheapest way to buy 25 of them
-  if (sim.timeLeft > (480 - 26) * TICK_HZ) {
+  // The keyboard reminder is for keyboards. On a touch device the buttons say
+  // what they are, and this line only sat on top of them.
+  const touching = input.touch || matchMedia('(pointer: coarse)').matches
+    || navigator.maxTouchPoints > 0;
+  if (!touching && sim.timeLeft > (480 - 26) * TICK_HZ) {
     ctx.save();
     ctx.textAlign = 'center';
     ctx.font = '600 13px system-ui';
     ctx.fillStyle = 'rgba(255,240,215,0.85)';
-    const long = 'WASD move   SPACE jump   E / CLICK grab   Q brace + boost   R flop';
-    const short = 'STEER left   ·   JUMP / GRAB / BRACE right';
-    ctx.fillText(w > 620 ? long : short, w / 2, h - 26);
+    ctx.fillText('WASD move   SPACE jump   E / CLICK grab   Q brace + boost   R flop',
+      w / 2, h - 26);
     ctx.restore();
   }
 
@@ -500,33 +483,44 @@ function drawHUD(dt) {
     ctx.restore();
   }
 
-  if (input.touch || matchMedia('(pointer: coarse)').matches) drawTouchUI();
+  // Three ways of asking, because no single one is reliable: a phone that has
+  // not been touched yet reports no touches, some Android browsers report a
+  // fine pointer, and a laptop with a touchscreen should still get the pad
+  // once a finger is actually used.
+  const coarse = input.touch
+    || matchMedia('(pointer: coarse)').matches
+    || navigator.maxTouchPoints > 0;
+  if (coarse) drawTouchUI();
+  G.tutorial.draw(ctx, view, coarse, !G.sim.connected[1 - G.slot]);
 }
 
 function drawTouchUI() {
   const { stick, buttons } = input.touchUI();
-  const w = view.w, h = view.h;
+  const L = controlLayout(view);
   ctx.save();
-  ctx.globalAlpha = 0.30;
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#fff';
   if (stick) {
-    ctx.beginPath(); ctx.arc(stick.ox, stick.oy, 46, 0, 7); ctx.stroke();
-    ctx.beginPath(); ctx.arc(stick.x, stick.y, 22, 0, 7); ctx.fillStyle = '#fff'; ctx.fill();
-  }
-  const bs = [
-    ['JUMP', w - 80, h - 80], ['GRAB', w - 80, h - 200], ['BRACE', w - 200, h - 80],
-  ];
-  ctx.font = '700 13px system-ui';
-  ctx.textAlign = 'center';
-  for (const [label, x, y] of bs) {
-    ctx.globalAlpha = buttons.has(label.toLowerCase()) ? 0.6 : 0.25;
-    ctx.beginPath(); ctx.arc(x, y, 44, 0, 7);
+    ctx.globalAlpha = 0.26;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#fff';
+    ctx.beginPath(); ctx.arc(stick.ox, stick.oy, L.stickMax, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 0.42;
+    ctx.beginPath();
+    ctx.arc(stick.x, stick.y, L.r * 0.5, 0, 7);
     ctx.fillStyle = '#fff'; ctx.fill();
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = '#3a2320';
-    ctx.fillText(label, x, y + 5);
   }
+  ctx.font = '800 ' + Math.round(L.r * 0.32) + 'px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  for (const b of L.buttons) {
+    const on = buttons.has(b.id);
+    ctx.globalAlpha = on ? 0.66 : 0.34;
+    ctx.beginPath(); ctx.arc(b.x, b.y, L.r, 0, 7);
+    ctx.fillStyle = on ? '#ffd85e' : '#fff';
+    ctx.fill();
+    ctx.globalAlpha = 0.92;
+    ctx.fillStyle = '#3a2320';
+    ctx.fillText(b.label, b.x, b.y + L.r * 0.12);
+  }
+  ctx.textAlign = 'left';
   ctx.restore();
 }
 
@@ -568,12 +562,29 @@ function drawMenuScene(dt) {
     im.src = src;
   }
 
+  // skipping the tutorial, by key or by tapping the corner of its card
+  addEventListener('keydown', (e) => {
+    if (e.code === 'KeyT' && G.playing) G.tutorial.skip();
+  });
+  canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    if (G.tutorial.hitSkip(e.clientX - r.left, e.clientY - r.top)) G.tutorial.skip();
+  });
+
   UI.init({
     cast: CAST,
     onPlay: (kind, code, char) => {
+      wake();
+      setMusic('menu');
       join(kind, code, char);
+    },
+    // pressing ENTER THE HOTEL is what starts the clock, not creating the room
+    onStart: () => {
       G.playing = true;
-      sfx.wake();
+      wake();
+      setMusic('game');
+      if (G.authority) G.sim.started = true;
+      else G.net && G.net.send({ t: 'start' });
     },
     onSolo: () => {
       if (G.authority) G.sim.connected = [true, true];
@@ -592,14 +603,19 @@ function drawMenuScene(dt) {
     },
     onQuit: () => {
       G.playing = false;
+      setMusic('menu');
       if (G.net) G.net.close();
     },
     onChar: (id) => {
       setChar(G.slot, id);
       G.net && G.net.send({ t: 'char', char: id });
     },
-    onSound: (on) => { sfx.on = on; },
+    onSound: (on) => setEnabled({ sound: on }),
+    onMusic: (on) => setEnabled({ music: on }),
+    onTutorial: () => G.tutorial.restart(),
   });
 })();
 
 window.G = G;   // a hand-hold for the console while tuning
+// where the touch buttons actually are, so a test can press one
+window.__layout = () => controlLayout(view);

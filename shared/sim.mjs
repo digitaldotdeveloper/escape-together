@@ -70,6 +70,11 @@ export function createSim(Matter, { authority = false } = {}) {
     Matter, engine, world, level, mech, players, netBodies,
     tick: 0,
     state: 'playing',          // playing | escaped | collapsed
+    // The round does not begin until somebody actually enters the hotel.
+    // Without this the collapse clock and the falling masonry start the moment
+    // the room is created, so a pair who spend two minutes choosing characters
+    // walk in with six minutes left and no idea why.
+    started: false,
     timeLeft: ROUND_SECONDS * TICK_HZ,
     shake: 0,
     beat: 0,
@@ -191,6 +196,7 @@ export function createSim(Matter, { authority = false } = {}) {
     mech.lift.plugin.lastY = mech.lift.position.y;
 
     // --- the building slowly gives up ---------------------------------------
+    if (!sim.started) return;
     sim.debrisTimer--;
     const urgency = 1 - sim.timeLeft / (ROUND_SECONDS * TICK_HZ);
     if (sim.debrisTimer <= 0) {
@@ -274,7 +280,7 @@ export function createSim(Matter, { authority = false } = {}) {
       }
     }
 
-    if (sim.state === 'playing') {
+    if (sim.state === 'playing' && sim.started) {
       sim.timeLeft--;
       if (sim.timeLeft <= 0) { sim.state = 'collapsed'; emit('collapsed', {}); }
     }
@@ -355,7 +361,7 @@ export function createSim(Matter, { authority = false } = {}) {
 
   /* -------------------------------------------------------------- snapshots */
 
-  const HEAD = 8;
+  const HEAD = 9;
   const PER_BODY = 6;
   const PER_PLAYER = 14;
   const FLOATS = HEAD + netBodies.length * PER_BODY + 2 * PER_PLAYER;
@@ -372,6 +378,7 @@ export function createSim(Matter, { authority = false } = {}) {
     f[5] = mech.plateLoad;
     f[6] = sim.beat;
     f[7] = sim.shake;
+    f[8] = sim.started ? 1 : 0;
 
     let o = HEAD;
     for (const b of netBodies) {
@@ -402,6 +409,7 @@ export function createSim(Matter, { authority = false } = {}) {
     mech.plateLoad = f[5];
     sim.beat = f[6];
     sim.shake = f[7];
+    sim.started = f[8] > 0.5;
 
     let o = HEAD;
     for (const b of netBodies) {

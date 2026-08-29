@@ -75,6 +75,11 @@ export const UI = {
     });
 
     $('#setsound').addEventListener('change', (e) => opts.onSound(e.target.checked));
+    $('#setmusic').addEventListener('change', (e) => opts.onMusic(e.target.checked));
+    $('#replaytutorial').addEventListener('click', (e) => {
+      opts.onTutorial();
+      e.target.textContent = 'THE TUTORIAL WILL RUN AGAIN';
+    });
     $('#setstreamer').addEventListener('change', (e) =>
       document.body.classList.toggle('streamer', e.target.checked));
 
@@ -172,6 +177,7 @@ function act(what) {
     case 'drop':
       hideAll();
       document.body.classList.add('playing');
+      cb.onStart();
       break;
     case 'retry':
       cb.onRetry();
