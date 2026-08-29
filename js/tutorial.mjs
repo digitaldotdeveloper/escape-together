@@ -26,7 +26,7 @@ const STEPS = [
     id: 'jump',
     title: 'JUMP',
     keys: 'SPACE',
-    touch: 'JUMP',
+    touch: 'Tap JUMP',
     hint: 'It is not much of a jump.',
     check: (s) => s.me.parts.torso.position.y < s.floorY - 46,
   },
@@ -34,24 +34,24 @@ const STEPS = [
     id: 'grab',
     title: 'GRAB SOMETHING',
     keys: 'E  or  LEFT CLICK',
-    touch: 'GRAB',
+    touch: 'Hold GRAB near something',
     hint: 'Beds, doors, luggage, your friend. Aim with the mouse or the stick.',
     check: (s) => !!(s.me.grabs.F || s.me.grabs.B),
   },
   {
     id: 'brace',
-    title: 'BRACE',
+    title: 'HOLD BOOST',
     keys: 'Q  or  RIGHT CLICK',
-    touch: 'BRACE',
-    hint: 'Plant your feet. Hold a pressure plate down. Be furniture.',
+    touch: 'Hold BOOST',
+    hint: 'You plant your feet and cup your hands. Nothing happens on your own.',
     check: (s) => s.cmd && s.cmd.brace && s.me.grounded > 0,
   },
   {
     id: 'boost',
-    title: 'THE BOOST',
-    keys: 'One of you holds Q. The other stands next to them and jumps.',
-    touch: 'One holds BRACE. The other taps JUMP beside them.',
-    hint: 'This is the whole game. You cannot do it on your own.',
+    title: 'NOW LAUNCH EACH OTHER',
+    keys: 'One holds Q. The other walks up beside them and presses SPACE.',
+    touch: 'One holds BOOST. The other stands beside them and taps JUMP.',
+    hint: 'That is how you get anywhere in this building.',
     needsPartner: true,
     check: (s) => s.boosted,
   },
@@ -68,6 +68,14 @@ export function createTutorial() {
     floorY: null,
     boosted: false,
     finishedAt: 0,
+
+    /** Which on-screen button this step wants, so it can be made to glow. */
+    currentId() {
+      if (!t.active) return null;
+      const step = STEPS[t.i];
+      if (!step) return null;
+      return step.id === 'move' ? null : step.id === 'boost' ? 'brace' : step.id;
+    },
 
     /** Something happened in the world that a step might be waiting for. */
     noteEvent(ev) {
@@ -137,7 +145,7 @@ export function createTutorial() {
       // On a phone the bottom of the screen belongs to the thumbs - the card
       // was sitting directly on top of the GRAB and BRACE buttons - so it goes
       // up under the clock instead, where nothing is ever pressed.
-      const y = narrow ? 178 : 96;
+      const y = narrow ? 214 : 96;
 
       ctx.save();
       ctx.translate(x, y);

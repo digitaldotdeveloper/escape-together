@@ -239,11 +239,13 @@ export function buildLevel(Matter, world) {
 
 /** The eight beats, in order. `at` is where the camera banner fires. */
 export const BEATS = [
-  { id: 'wake',    at: 120,  title: 'ROOM 402',            hint: 'WASD to move. The door is blocked.' },
-  { id: 'wardrobe', at: 700, title: 'TOO HEAVY FOR ONE',   hint: 'Both of you. Grab it and pull.' , mass: 15 },
+  // These captions are read on a phone as often as on a keyboard, so they say
+  // what to do rather than which key to press.
+  { id: 'wake',    at: 120,  title: 'ROOM 402',            hint: 'The door is blocked. Find another way out.' },
+  { id: 'vent',    at: 700,  title: 'THE VENT IS TOO HIGH', hint: 'One holds BOOST. The other jumps off them.' },
   { id: 'plate',   at: 1150, title: 'EMERGENCY SHUTTER',   hint: 'Something has to hold the plate down.' },
   { id: 'hall',    at: 1960, title: 'THE FLOOR IS LEAVING', hint: 'Do not stand still.' },
-  { id: 'climb',   at: 2900, title: 'GET UP THERE',        hint: 'Stack it. Boost each other.' },
+  { id: 'climb',   at: 2900, title: 'GET UP THERE',        hint: 'Stack the furniture, or boost each other up.' },
   { id: 'broken',  at: 3700, title: 'THE BROKEN SECTION',  hint: 'Run at your friend and jump. Or build a bridge.' },
   { id: 'lift',    at: 4500, title: 'EMERGENCY LIFT',      hint: 'Both levers. At the same time.' },
   { id: 'escape',  at: 5000, title: 'GET IN',              hint: 'Both of you. Now.' },

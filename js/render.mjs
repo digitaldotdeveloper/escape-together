@@ -43,7 +43,10 @@ export function updateCamera(sim, view, dt, soloFocus) {
   // sit the pair low in frame: there is always more happening above them
   // (ceilings, debris, the floor they are trying to reach) than below. On a
   // portrait screen there is more spare room, so push them lower still.
-  const lowness = view.h > view.w ? 0.17 : 0.10;
+  // On a portrait phone the bottom quarter of the screen is thumbs and
+  // buttons, so the action is kept nearer the middle rather than pushed down
+  // into the controls.
+  const lowness = view.h > view.w ? 0.02 : 0.10;
   CAM.y = lerp(CAM.y, midY - view.h * lowness / zoom, k);
   CAM.zoom = lerp(CAM.zoom, zoom, k * 0.7);
 
@@ -124,6 +127,37 @@ function drawBackdrop(ctx, sim, view, bgs) {
   v.addColorStop(1, '#080405');
   ctx.fillStyle = v;
   ctx.fillRect(CAM.x - 2400, FLOOR1 + 10, 4800, 1400);
+
+  // Something down the shaft. On a portrait phone a third of the screen is
+  // below the floor, and an unbroken black rectangle reads as a rendering
+  // fault rather than as a drop - so the floors below get sketched in,
+  // fading out, with a dim emergency light somewhere down there.
+  ctx.save();
+  for (let i = 1; i <= 3; i++) {
+    const y = FLOOR1 + i * 190;
+    const a = 0.30 / i;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#4a3a34';
+    ctx.fillRect(CAM.x - 1400, y, 2800, 16);
+    ctx.fillStyle = '#2c211f';
+    ctx.fillRect(CAM.x - 1400, y + 16, 2800, 8);
+    // a few broken joists poking out of the dark
+    ctx.globalAlpha = a * 0.8;
+    ctx.fillStyle = '#6b4a30';
+    for (let k = -6; k <= 6; k++) {
+      const jx = CAM.x + k * 230 + ((i * 61) % 140);
+      ctx.fillRect(jx, y - 26, 12, 26);
+    }
+  }
+  ctx.globalAlpha = 0.16;
+  const glow = ctx.createRadialGradient(
+    CAM.x + 180, FLOOR1 + 250, 6, CAM.x + 180, FLOOR1 + 250, 260);
+  glow.addColorStop(0, '#ff6a3a');
+  glow.addColorStop(1, 'rgba(255,106,58,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(CAM.x - 200, FLOOR1 + 20, 800, 500);
+  ctx.restore();
+  ctx.globalAlpha = 1;
 
   // the interior wall, one long painted strip, parallaxed a touch
   const px = CAM.x * 0.06;
@@ -373,6 +407,45 @@ export function drawWorld(ctx, sim, view, arts, bgs, ui) {
     if (!sim.connected[i]) continue;
     const art = arts[i];
     if (art) drawCharacter(ctx, sim.players[i], art);
+  }
+
+  // The boost is the one thing nobody works out on their own, so the game says
+  // it out loud exactly when it becomes possible: when one of you is holding
+  // BOOST and the other is standing close enough to be thrown.
+  if (sim.connected[0] && sim.connected[1]) {
+    for (let i = 0; i < 2; i++) {
+      const holder = sim.players[i];
+      const flier = sim.players[1 - i];
+      if (!holder.bracing) continue;
+      const a = holder.parts.torso.position;
+      const b = flier.parts.torso.position;
+      const near = Math.abs(a.x - b.x) < 52 && Math.abs(a.y - b.y) < 90;
+      const mine = (1 - i) === ui.slot;
+      const beat = 0.5 + 0.5 * Math.sin(Date.now() / 220);
+
+      ctx.save();
+      ctx.textAlign = 'center';
+      if (near) {
+        // over the person who should jump
+        ctx.font = '900 15px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(125,255,154,' + (0.7 + beat * 0.3) + ')';
+        ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+        ctx.lineWidth = 5;
+        const label = mine ? 'JUMP!' : 'THEY CAN JUMP';
+        ctx.strokeText(label, b.x, b.y - 78 - beat * 4);
+        ctx.fillText(label, b.x, b.y - 78 - beat * 4);
+      } else {
+        // holding it with nobody there: say what is missing
+        ctx.font = '800 12px system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,216,94,0.75)';
+        ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = 4;
+        const label = 'READY - COME STAND HERE';
+        ctx.strokeText(label, a.x, a.y - 76);
+        ctx.fillText(label, a.x, a.y - 76);
+      }
+      ctx.restore();
+    }
   }
 
   // name tags, so you always know which floppy person is you

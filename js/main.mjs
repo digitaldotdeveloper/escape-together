@@ -407,7 +407,7 @@ function drawHUD(dt) {
       ctx.globalAlpha = a;
       ctx.textAlign = 'center';
       const narrow = w < 620;
-      const by = narrow ? 150 : 92;
+      const by = narrow ? 132 : 92;
       ctx.font = (narrow ? '900 26px' : '900 34px') + ' system-ui, sans-serif';
       ctx.fillStyle = '#ffd85e';
       ctx.strokeStyle = 'rgba(0,0,0,0.75)';
@@ -465,7 +465,7 @@ function drawHUD(dt) {
     ctx.textAlign = 'center';
     ctx.font = '600 13px system-ui';
     ctx.fillStyle = 'rgba(255,240,215,0.85)';
-    ctx.fillText('WASD move   SPACE jump   E / CLICK grab   Q brace + boost   R flop',
+    ctx.fillText('WASD move   SPACE jump   E / CLICK grab   Q hold to BOOST a friend   R flop',
       w / 2, h - 26);
     ctx.restore();
   }
@@ -491,36 +491,154 @@ function drawHUD(dt) {
   const coarse = input.touch
     || matchMedia('(pointer: coarse)').matches
     || navigator.maxTouchPoints > 0;
-  if (coarse) drawTouchUI();
+  if (coarse) drawTouchUI(dt, G.tutorial.currentId());
   G.tutorial.draw(ctx, view, coarse, !G.sim.connected[1 - G.slot]);
 }
 
-function drawTouchUI() {
+/* The on-screen controls.
+ *
+ * Drawn in the game's own language rather than as grey circles: dark rounded
+ * pads with a gold ring, a glyph, and a label, sitting on a scrim so they
+ * never have to compete with bright wallpaper behind them. Pressing one fills
+ * it and squashes it, because on a touchscreen your thumb is covering the
+ * button and the only way to know it worked is for the rest of it to move.
+ */
+const press = { jump: 0, grab: 0, brace: 0 };
+
+function glyph(kind, x, y, r, colour) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineWidth = Math.max(2.5, r * 0.13);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const u = r * 0.34;
+  if (kind === 'up') {                       // a jump: chevron with a takeoff line
+    ctx.beginPath();
+    ctx.moveTo(-u, 0); ctx.lineTo(0, -u * 1.05); ctx.lineTo(u, 0);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -u * 0.9); ctx.lineTo(0, u * 0.55);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-u * 0.85, u * 1.0); ctx.lineTo(u * 0.85, u * 1.0);
+    ctx.stroke();
+  } else if (kind === 'pinch') {             // a grab: two hands closing in
+    ctx.beginPath();
+    ctx.arc(-u * 0.15, 0, u * 0.95, Math.PI * 0.62, Math.PI * 1.38);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(u * 0.15, 0, u * 0.95, Math.PI * 1.62, Math.PI * 0.38);
+    ctx.stroke();
+  } else {                    // a boost: cupped hands, and someone leaving them
+    ctx.beginPath();
+    ctx.arc(0, u * 0.35, u * 0.9, 0, Math.PI);      // the cupped hands
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, -u * 1.15); ctx.lineTo(0, -u * 0.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-u * 0.5, -u * 0.6); ctx.lineTo(0, -u * 1.2); ctx.lineTo(u * 0.5, -u * 0.6);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTouchUI(dt, highlight) {
   const { stick, buttons } = input.touchUI();
   const L = controlLayout(view);
+  const w = view.w, h = view.h;
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+
   ctx.save();
-  if (stick) {
-    ctx.globalAlpha = 0.26;
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#fff';
-    ctx.beginPath(); ctx.arc(stick.ox, stick.oy, L.stickMax, 0, 7); ctx.stroke();
-    ctx.globalAlpha = 0.42;
-    ctx.beginPath();
-    ctx.arc(stick.x, stick.y, L.r * 0.5, 0, 7);
-    ctx.fillStyle = '#fff'; ctx.fill();
+
+  // the control band, so a pale wallpaper never swallows the buttons
+  const scrim = ctx.createLinearGradient(0, L.scrimTop, 0, h);
+  scrim.addColorStop(0, 'rgba(18,10,12,0)');
+  scrim.addColorStop(1, 'rgba(18,10,12,0.5)');
+  ctx.fillStyle = scrim;
+  ctx.fillRect(0, L.scrimTop, w, h - L.scrimTop);
+
+  // --- the steering thumb -------------------------------------------------
+  const base = stick ? { x: stick.ox, y: stick.oy } : L.stickHome;
+  const knob = stick ? { x: stick.x, y: stick.y } : L.stickHome;
+  const dx = knob.x - base.x, dy = knob.y - base.y;
+  const len = Math.hypot(dx, dy);
+  const cap = Math.min(len, L.stickMax);
+  const kx = len > 0 ? base.x + (dx / len) * cap : base.x;
+  const ky = len > 0 ? base.y + (dy / len) * cap : base.y;
+
+  ctx.globalAlpha = stick ? 0.5 : 0.24;
+  ctx.beginPath();
+  ctx.arc(base.x, base.y, L.stickMax, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(18,10,12,0.5)';
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#ffd85e';
+  ctx.stroke();
+
+  ctx.globalAlpha = stick ? 0.95 : 0.45;
+  ctx.beginPath();
+  ctx.arc(kx, ky, L.stickMax * 0.46, 0, Math.PI * 2);
+  ctx.fillStyle = stick ? '#ffd85e' : 'rgba(255,242,216,0.75)';
+  ctx.fill();
+
+  if (!stick) {
+    ctx.globalAlpha = 0.5;
+    ctx.font = '800 ' + Math.round(11 * L.scale) + 'px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd85e';
+    ctx.fillText('MOVE', base.x, base.y + L.stickMax + 16 * L.scale);
   }
-  ctx.font = '800 ' + Math.round(L.r * 0.32) + 'px system-ui, sans-serif';
+
+  // --- the buttons ---------------------------------------------------------
   ctx.textAlign = 'center';
   for (const b of L.buttons) {
     const on = buttons.has(b.id);
-    ctx.globalAlpha = on ? 0.66 : 0.34;
-    ctx.beginPath(); ctx.arc(b.x, b.y, L.r, 0, 7);
-    ctx.fillStyle = on ? '#ffd85e' : '#fff';
+    press[b.id] += ((on ? 1 : 0) - press[b.id]) * Math.min(1, dt * 22);
+    const p = press[b.id];
+    const r = b.r * (1 - p * 0.07);
+    const wanted = highlight === b.id;
+
+    ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 10 * L.scale;
+    ctx.shadowOffsetY = 4 * L.scale * (1 - p);
+
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = p > 0.02
+      ? 'rgba(255,216,94,' + (0.35 + p * 0.6) + ')'
+      : 'rgba(30,18,19,0.62)';
     ctx.fill();
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = '#3a2320';
-    ctx.fillText(b.label, b.x, b.y + L.r * 0.12);
+    ctx.restore();
+
+    // the ring, which is what the tutorial pulses when it wants this one
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+    ctx.lineWidth = (wanted ? 4.5 : 3) * L.scale;
+    ctx.strokeStyle = wanted
+      ? 'rgba(125,255,154,' + (0.55 + pulse * 0.45) + ')'
+      : 'rgba(255,216,94,' + (0.55 + p * 0.45) + ')';
+    ctx.stroke();
+
+    if (wanted) {
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, r + (6 + pulse * 7) * L.scale, 0, Math.PI * 2);
+      ctx.lineWidth = 2 * L.scale;
+      ctx.strokeStyle = 'rgba(125,255,154,' + (0.30 - pulse * 0.22) + ')';
+      ctx.stroke();
+    }
+
+    const ink = p > 0.5 ? '#2a1a17' : '#ffd85e';
+    glyph(b.glyph, b.x, b.y - r * 0.16, r, ink);
+    ctx.fillStyle = ink;
+    ctx.font = '900 ' + Math.round(r * 0.27) + 'px system-ui, sans-serif';
+    ctx.fillText(b.label, b.x, b.y + r * 0.66);
   }
+
   ctx.textAlign = 'left';
   ctx.restore();
 }

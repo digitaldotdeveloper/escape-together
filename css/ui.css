@@ -58,17 +58,20 @@ html, body {
 
 /* -------------------------------------------------------------------- brand */
 
-.brandwrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.brandwrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 
 .logo {
-  margin: 0; line-height: 0.84; letter-spacing: -0.02em;
+  /* 0.84 stacked the two words closer together than the 3D shadow under the
+     first one is tall, so ESCAPE's shadow landed inside TOGETHER. The drop
+     shadow is 10px plus its blur, so the leading has to clear it. */
+  margin: 0; line-height: 0.98; letter-spacing: -0.02em;
   font-size: clamp(38px, min(9vw, 13vh), 112px); font-weight: 900; font-style: italic;
   color: var(--gold);
   text-shadow:
     0 5px 0 var(--gold-deep), 0 10px 0 #a8761b,
     0 16px 24px rgba(0, 0, 0, .55);
 }
-.logo span { display: block; color: var(--cream); text-shadow: 0 5px 0 #b8703c, 0 10px 0 #7d4626, 0 16px 24px rgba(0,0,0,.5); }
+.logo span { display: block; margin-top: 2px; color: var(--cream); text-shadow: 0 5px 0 #b8703c, 0 10px 0 #7d4626, 0 16px 24px rgba(0,0,0,.5); }
 
 .tagline { margin: min(12px,1.4vh) 0 0; font-weight: 800; letter-spacing: .34em; font-size: clamp(11px, 2vw, 15px); color: var(--gold); }
 .pitch { margin: 2px 0 0; color: rgba(255, 242, 216, .72); font-size: 14px; max-width: 34ch; }
@@ -232,4 +235,7 @@ code { background: rgba(255,216,94,.16); padding: 1px 7px; border-radius: 6px; c
 @media (max-width: 720px) {
   .menuside { display: none; }
   .btn { min-width: 240px; }
+  .logo { text-shadow: 0 4px 0 var(--gold-deep), 0 9px 16px rgba(0, 0, 0, .6); }
+  .logo span { text-shadow: 0 4px 0 #b8703c, 0 9px 16px rgba(0, 0, 0, .55); }
+  .pitch { font-size: 13px; }
 }

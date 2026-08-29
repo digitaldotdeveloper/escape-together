@@ -23,21 +23,49 @@ export const KEYMAP = {
   limp: ['KeyR'],
 };
 
-/** Where the on-screen controls live. The single source of truth. */
+/* Where the on-screen controls live. The single source of truth: the drawing
+ * and the hit-testing both read this, because when they were written out
+ * separately they drifted and pressing GRAB jumped.
+ *
+ * The sizes are not arbitrary. JUMP is the one pressed most and sits where a
+ * right thumb rests without moving; GRAB is directly above it, one thumb-flex
+ * away; BRACE is held rather than tapped, so it can afford to be further
+ * across and smaller. All three clear the bottom-left steering thumb, and all
+ * three sit above the iOS home indicator.
+ */
+let safeInset = null;
+function bottomSafeArea() {
+  if (safeInset !== null) return safeInset;
+  try {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'position:fixed;left:0;bottom:0;width:1px;pointer-events:none;' +
+      'height:env(safe-area-inset-bottom,0px)';
+    document.body.appendChild(probe);
+    safeInset = probe.getBoundingClientRect().height || 0;
+    probe.remove();
+  } catch { safeInset = 0; }
+  return safeInset;
+}
+
 export function controlLayout(view) {
   const w = view.w, h = view.h;
-  // fat enough for a thumb on a small phone, not silly on a tablet
-  const s = Math.max(0.85, Math.min(1.3, Math.min(w, h) / 400));
-  const r = 42 * s;
-  const pad = 20 * s;
+  const s = Math.max(0.82, Math.min(1.25, Math.min(w, h) / 400));
+  const sab = bottomSafeArea();
+  const right = (px) => w - px * s;
+  const bottom = (px) => h - px * s - sab;
+
   return {
-    r,
-    stickMax: 56 * s,
-    stickZone: w * 0.46,       // left of this, a touch steers
+    scale: s,
+    stickMax: 58 * s,
+    stickZone: w * 0.46,
+    stickHome: { x: 88 * s, y: bottom(104) },
+    // the strip the controls live over, darkened so they always have contrast
+    scrimTop: h - (250 * s + sab),
     buttons: [
-      { id: 'jump',  label: 'JUMP',  x: w - pad - r,         y: h - pad - r },
-      { id: 'grab',  label: 'GRAB',  x: w - pad - r,         y: h - pad - r * 3.4 },
-      { id: 'brace', label: 'BRACE', x: w - pad - r * 3.4,   y: h - pad - r * 1.7 },
+      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 50 * s, x: right(80),  y: bottom(90) },
+      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 44 * s, x: right(80),  y: bottom(204) },
+      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 42 * s, x: right(192), y: bottom(118) },
     ],
   };
 }
@@ -93,10 +121,12 @@ export function createInput(canvas, opts = {}) {
 
   const buttonAt = (x, y) => {
     const L = controlLayout(view());
-    let best = null, bestD = L.r * 1.35;
+    let best = null, bestScore = Infinity;
     for (const b of L.buttons) {
-      const d = Math.hypot(b.x - x, b.y - y);
-      if (d < bestD) { bestD = d; best = b.id; }
+      // a generous ring around each button, scored by how far outside it the
+      // touch landed, so a tap between two of them picks the nearer
+      const d = Math.hypot(b.x - x, b.y - y) - b.r * 1.28;
+      if (d < 0 && d < bestScore) { bestScore = d; best = b.id; }
     }
     return best;
   };
@@ -105,7 +135,13 @@ export function createInput(canvas, opts = {}) {
     state.touch = true;
     const x = t.clientX, y = t.clientY;
     const btn = buttonAt(x, y);
-    if (btn) { pressed.set(t.identifier, btn); return; }
+    if (btn) {
+      pressed.set(t.identifier, btn);
+      // a short tick under the thumb: the only feedback a finger gets when it
+      // is covering the thing it just pressed
+      if (navigator.vibrate) { try { navigator.vibrate(11); } catch {} }
+      return;
+    }
     if (!stick && x < controlLayout(view()).stickZone) {
       stick = { id: t.identifier, ox: x, oy: y, x, y };
     }
