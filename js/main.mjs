@@ -602,6 +602,15 @@ function drawTouchUI(dt, highlight) {
     const wanted = highlight === b.id;
 
     ctx.globalAlpha = 1;
+    // a soft dark halo under each pad: the top of the column reaches up out of
+    // the scrim and over bright wallpaper, and a gold ring on pale yellow is
+    // not a contrast you want to bet a button press on
+    const halo = ctx.createRadialGradient(b.x, b.y, r * 0.75, b.x, b.y, r * 1.75);
+    halo.addColorStop(0, 'rgba(14,8,9,0.55)');
+    halo.addColorStop(1, 'rgba(14,8,9,0)');
+    ctx.fillStyle = halo;
+    ctx.fillRect(b.x - r * 1.8, b.y - r * 1.8, r * 3.6, r * 3.6);
+
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
     ctx.shadowBlur = 10 * L.scale;

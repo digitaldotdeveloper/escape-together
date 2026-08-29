@@ -27,11 +27,14 @@ export const KEYMAP = {
  * and the hit-testing both read this, because when they were written out
  * separately they drifted and pressing GRAB jumped.
  *
- * The sizes are not arbitrary. JUMP is the one pressed most and sits where a
- * right thumb rests without moving; GRAB is directly above it, one thumb-flex
- * away; BRACE is held rather than tapped, so it can afford to be further
- * across and smaller. All three clear the bottom-left steering thumb, and all
- * three sit above the iOS home indicator.
+ * The three action buttons are a single vertical column against the right
+ * edge, close enough together that a thumb slides from one to the next without
+ * being lifted or aimed. JUMP is at the bottom, where the thumb already rests;
+ * GRAB and BOOST are one flex and two flexes up. A scattered cluster looked
+ * tidier and was much worse to actually play: every change of button was a
+ * small act of navigation.
+ *
+ * They also sit above the iOS home indicator and clear the steering thumb.
  */
 let safeInset = null;
 function bottomSafeArea() {
@@ -55,17 +58,19 @@ export function controlLayout(view) {
   const right = (px) => w - px * s;
   const bottom = (px) => h - px * s - sab;
 
+  const colX = right(78);
+  const step = 98 * s;          // centre to centre: touching, never overlapping
   return {
     scale: s,
     stickMax: 58 * s,
     stickZone: w * 0.46,
     stickHome: { x: 88 * s, y: bottom(104) },
     // the strip the controls live over, darkened so they always have contrast
-    scrimTop: h - (250 * s + sab),
+    scrimTop: h - (330 * s + sab),
     buttons: [
-      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 50 * s, x: right(80),  y: bottom(90) },
-      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 44 * s, x: right(80),  y: bottom(204) },
-      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 42 * s, x: right(192), y: bottom(118) },
+      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 46 * s, x: colX, y: bottom(88) },
+      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 44 * s, x: colX, y: bottom(88) - step },
+      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 44 * s, x: colX, y: bottom(88) - step * 2 },
     ],
   };
 }
@@ -131,20 +136,36 @@ export function createInput(canvas, opts = {}) {
     return best;
   };
 
+  // a short tick under the thumb: the only feedback a finger gets when it is
+  // covering the thing it just pressed
+  const buzz = () => { if (navigator.vibrate) { try { navigator.vibrate(11); } catch {} } };
+
   const touchStart = (t) => {
     state.touch = true;
     const x = t.clientX, y = t.clientY;
     const btn = buttonAt(x, y);
     if (btn) {
       pressed.set(t.identifier, btn);
-      // a short tick under the thumb: the only feedback a finger gets when it
-      // is covering the thing it just pressed
-      if (navigator.vibrate) { try { navigator.vibrate(11); } catch {} }
+      buzz();
       return;
     }
     if (!stick && x < controlLayout(view()).stickZone) {
       stick = { id: t.identifier, ox: x, oy: y, x, y };
     }
+  };
+
+  /** A finger already down on the buttons has moved: follow it.
+   *
+   *  Without this a touch is welded to whatever it first landed on, so sliding
+   *  from JUMP up to GRAB does nothing at all and every change of button means
+   *  lifting the thumb, finding the next one, and pressing again. */
+  const touchDrag = (t) => {
+    if (!pressed.has(t.identifier)) return;
+    const was = pressed.get(t.identifier);
+    const now = buttonAt(t.clientX, t.clientY);
+    if (now === was) return;
+    if (now) { pressed.set(t.identifier, now); buzz(); }
+    else pressed.delete(t.identifier);   // slid off the column: let go
   };
   const touchEnd = (t) => {
     if (stick && stick.id === t.identifier) stick = null;
@@ -159,6 +180,7 @@ export function createInput(canvas, opts = {}) {
     e.preventDefault();
     for (const t of e.changedTouches) {
       if (stick && stick.id === t.identifier) { stick.x = t.clientX; stick.y = t.clientY; }
+      else touchDrag(t);
     }
   }, { passive: false });
   const endAll = (e) => { for (const t of e.changedTouches) touchEnd(t); };
