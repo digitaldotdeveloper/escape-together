@@ -23,6 +23,7 @@ import { UI } from './ui.mjs';
 import { wake, setMusic, setEnabled, audio, sfx } from './audio.mjs';
 import { createTutorial } from './tutorial.mjs';
 import { controlLayout } from './input.mjs';
+import { orientation } from './orientation.mjs';
 
 const Matter = window.Matter;
 const canvas = document.getElementById('game');
@@ -546,7 +547,7 @@ function glyph(kind, x, y, r, colour) {
 }
 
 function drawTouchUI(dt, highlight) {
-  const { stick, buttons } = input.touchUI();
+  const { stick, buttons, grabLatch: latched } = input.touchUI();
   const L = controlLayout(view);
   const w = view.w, h = view.h;
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
@@ -644,8 +645,11 @@ function drawTouchUI(dt, highlight) {
     const ink = p > 0.5 ? '#2a1a17' : '#ffd85e';
     glyph(b.glyph, b.x, b.y - r * 0.16, r, ink);
     ctx.fillStyle = ink;
-    ctx.font = '900 ' + Math.round(r * 0.27) + 'px system-ui, sans-serif';
-    ctx.fillText(b.label, b.x, b.y + r * 0.66);
+    // a latched GRAB says what the next tap does, not what the last one did
+    const label = b.latch && latched ? 'LET GO' : b.label;
+    ctx.font = '900 ' + Math.round(r * (label.length > 5 ? 0.24 : 0.27)) +
+      'px system-ui, sans-serif';
+    ctx.fillText(label, b.x, b.y + r * 0.66);
   }
 
   ctx.textAlign = 'left';
@@ -699,6 +703,8 @@ function drawMenuScene(dt) {
     if (G.tutorial.hitSkip(e.clientX - r.left, e.clientY - r.top)) G.tutorial.skip();
   });
 
+  orientation.watch(document.getElementById('rotate'));
+
   UI.init({
     cast: CAST,
     onPlay: (kind, code, char) => {
@@ -710,6 +716,9 @@ function drawMenuScene(dt) {
     onStart: () => {
       G.playing = true;
       wake();
+      // a real tap, which is the only moment a browser will grant either of
+      // these: full screen, and a portrait lock where one is available
+      orientation.goFullscreen();
       setMusic('game');
       if (G.authority) G.sim.started = true;
       else G.net && G.net.send({ t: 'start' });
@@ -747,3 +756,4 @@ function drawMenuScene(dt) {
 window.G = G;   // a hand-hold for the console while tuning
 // where the touch buttons actually are, so a test can press one
 window.__layout = () => controlLayout(view);
+window.__orient = orientation;

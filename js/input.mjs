@@ -27,14 +27,15 @@ export const KEYMAP = {
  * and the hit-testing both read this, because when they were written out
  * separately they drifted and pressing GRAB jumped.
  *
- * The three action buttons are a single vertical column against the right
- * edge, close enough together that a thumb slides from one to the next without
- * being lifted or aimed. JUMP is at the bottom, where the thumb already rests;
- * GRAB and BOOST are one flex and two flexes up. A scattered cluster looked
- * tidier and was much worse to actually play: every change of button was a
- * small act of navigation.
+ * Steering is bottom left. Bottom right is a cluster of three:
  *
- * They also sit above the iOS home indicator and clear the steering thumb.
+ *              [ JUMP  ]
+ *   [ BOOST ]  [ GRAB  ]
+ *
+ * GRAB sits under the resting thumb because it is the verb used most, JUMP is
+ * one flex above it, and BOOST is one flex across. Everything is within a
+ * thumb's sweep of the corner, and clear of both the steering thumb and the
+ * iOS home indicator.
  */
 let safeInset = null;
 function bottomSafeArea() {
@@ -58,19 +59,20 @@ export function controlLayout(view) {
   const right = (px) => w - px * s;
   const bottom = (px) => h - px * s - sab;
 
-  const colX = right(78);
-  const step = 98 * s;          // centre to centre: touching, never overlapping
+  const rx = right(78);          // the resting thumb
+  const ry = bottom(88);
+  const step = 100 * s;          // centre to centre: adjacent, never overlapping
   return {
     scale: s,
     stickMax: 58 * s,
     stickZone: w * 0.46,
     stickHome: { x: 88 * s, y: bottom(104) },
     // the strip the controls live over, darkened so they always have contrast
-    scrimTop: h - (330 * s + sab),
+    scrimTop: h - (250 * s + sab),
     buttons: [
-      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 46 * s, x: colX, y: bottom(88) },
-      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 44 * s, x: colX, y: bottom(88) - step },
-      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 44 * s, x: colX, y: bottom(88) - step * 2 },
+      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 47 * s, x: rx,        y: ry,        latch: true },
+      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 45 * s, x: rx,        y: ry - step },
+      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 45 * s, x: rx - step, y: ry },
     ],
   };
 }
@@ -121,8 +123,13 @@ export function createInput(canvas, opts = {}) {
 
   /* ---------------------------------------------------------------- touch */
 
-  const pressed = new Map();   // touch id -> button id
+  const pressed = new Map();   // touch id -> button id (momentary buttons)
   let stick = null;
+  // GRAB is a latch on touch, not a hold. Keeping a thumb pinned to it while
+  // the other thumb steers is the single most awkward thing about carrying
+  // something on a phone, so a tap takes hold and a tap lets go. JUMP and
+  // BOOST stay momentary, because both of those ARE the length of the press.
+  let grabLatch = false;
 
   const buttonAt = (x, y) => {
     const L = controlLayout(view());
@@ -144,6 +151,12 @@ export function createInput(canvas, opts = {}) {
     state.touch = true;
     const x = t.clientX, y = t.clientY;
     const btn = buttonAt(x, y);
+    if (btn === 'grab') {
+      grabLatch = !grabLatch;
+      pressed.set(t.identifier, 'grabTap');   // held only so it can light up
+      buzz();
+      return;
+    }
     if (btn) {
       pressed.set(t.identifier, btn);
       buzz();
@@ -162,10 +175,13 @@ export function createInput(canvas, opts = {}) {
   const touchDrag = (t) => {
     if (!pressed.has(t.identifier)) return;
     const was = pressed.get(t.identifier);
+    // a finger that tapped GRAB has done its job; sliding it around must not
+    // toggle the latch again and again
+    if (was === 'grabTap') return;
     const now = buttonAt(t.clientX, t.clientY);
-    if (now === was) return;
+    if (now === was || now === 'grab') return;
     if (now) { pressed.set(t.identifier, now); buzz(); }
-    else pressed.delete(t.identifier);   // slid off the column: let go
+    else pressed.delete(t.identifier);   // slid off the cluster: let go
   };
   const touchEnd = (t) => {
     if (stick && stick.id === t.identifier) stick = null;
@@ -208,7 +224,7 @@ export function createInput(canvas, opts = {}) {
 
     const btn = new Set(pressed.values());
     state.jump = held('jump') || btn.has('jump');
-    state.grab = held('grab') || !!state.mouseGrab || btn.has('grab');
+    state.grab = held('grab') || !!state.mouseGrab || grabLatch;
     state.brace = held('brace') || !!state.mouseBrace || btn.has('brace');
     state.limp = held('limp');
 
@@ -228,6 +244,12 @@ export function createInput(canvas, opts = {}) {
     return state;
   };
 
-  state.touchUI = () => ({ stick, buttons: new Set(pressed.values()) });
+  state.touchUI = () => {
+    const on = new Set(pressed.values());
+    if (grabLatch) on.add('grab');
+    return { stick, buttons: on, grabLatch };
+  };
+  // dropping everything on a respawn or a retry should not leave the latch on
+  state.releaseGrab = () => { grabLatch = false; };
   return state;
 }

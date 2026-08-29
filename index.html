@@ -6,6 +6,12 @@
 <title>ESCAPE TOGETHER - 2 player online co-op physics</title>
 <meta name="description" content="Two friends, one collapsing hotel, and physics that will betray you both. Free, in your browser, no download.">
 <link rel="stylesheet" href="css/ui.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#241a1c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="assets/icon/icon-192.png">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏃</text></svg>">
 </head>
 <body>
@@ -161,6 +167,16 @@
   <div class="row">
     <button class="btn big" data-act="retry">RETRY</button>
     <button class="btn ghost" data-act="quit">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- Sideways on a phone. The layout is built for upright: the action in the
+     top two thirds, thumbs in the bottom third. -->
+<div id="rotate">
+  <div class="rotatecard">
+    <div class="phone"><span></span></div>
+    <h2>TURN YOUR PHONE UPRIGHT</h2>
+    <p>Escape Together is played in portrait &mdash; the hotel goes up, and so do you.</p>
   </div>
 </div>
 

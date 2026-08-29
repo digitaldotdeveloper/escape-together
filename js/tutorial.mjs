@@ -34,7 +34,7 @@ const STEPS = [
     id: 'grab',
     title: 'GRAB SOMETHING',
     keys: 'E  or  LEFT CLICK',
-    touch: 'Hold GRAB near something',
+    touch: 'Tap GRAB near something. Tap again to let go.',
     hint: 'Beds, doors, luggage, your friend. Aim with the mouse or the stick.',
     check: (s) => !!(s.me.grabs.F || s.me.grabs.B),
   },
