@@ -28,8 +28,12 @@ export function updateCamera(sim, view, dt, soloFocus, extraShake = 0) {
   // Zoom out until both of them fit, and no further. The lower bound matters
   // more than the upper: below about 0.55 a character is 60 pixels tall, you
   // can no longer read a face, and the game stops being funny.
-  const spanX = Math.abs(a.x - b.x) + 330;
-  const spanY = Math.abs(a.y - b.y) + 300;
+  // More room around the pair. At the old margins a phone was showing about
+  // five metres of hotel and you could not see the thing you were walking
+  // towards until you were standing on it - which reads as "zoomed in" and
+  // plays as "why did that hit me".
+  const spanX = Math.abs(a.x - b.x) + 520;
+  const spanY = Math.abs(a.y - b.y) + 400;
   // On a TALL screen the height is not the real constraint - obeying it would
   // zoom in until the two of you no longer fit side by side - so it is allowed
   // to pull the zoom down only so far. On a wide screen, which is how the game
@@ -37,7 +41,19 @@ export function updateCamera(sim, view, dt, soloFocus, extraShake = 0) {
   const tall = view.h > view.w;
   const hLimit = tall ? Math.max(view.h, view.w * 0.62) : view.h;
   const fit = Math.min(view.w / spanX, hLimit / spanY);
-  const zoom = clamp(fit, 0.55, 1.55);
+  const zoom = clamp(fit, 0.5, 1.05);
+
+  // A single non-finite body position propagates into the camera and then into
+  // every gradient and transform drawn from it, and the canvas throws rather
+  // than drawing nothing - so the whole frame is lost. Refuse it here, once,
+  // instead of guarding forty draw calls.
+  if (!Number.isFinite(midX) || !Number.isFinite(midY) || !Number.isFinite(zoom)) return;
+
+  // and repair itself if it ever did get poisoned: a NaN camera draws nothing
+  // at all, forever, because the canvas throws rather than skipping the shape
+  if (!Number.isFinite(CAM.x) || !Number.isFinite(CAM.y) || !Number.isFinite(CAM.zoom)) {
+    CAM.x = midX; CAM.y = midY; CAM.zoom = zoom; CAM.shake = 0;
+  }
 
   const k = 1 - Math.pow(0.0016, dt);
   CAM.x = lerp(CAM.x, midX, k);
@@ -115,6 +131,21 @@ function wallpaper(ctx, x, y, w, h) {
   ctx.fillRect(x, y + h - 12, w, 12);
 }
 
+/* The hotel is not one wall repeated for five thousand units.
+ *
+ * Each stretch of the level names the room it is in, and the backdrop is drawn
+ * from that. It is the cheapest possible way to make a building feel like a
+ * building rather than a corridor with the same wallpaper printed on it, and
+ * it is what lets a player say "meet me by the lifts" and be understood. */
+export const ZONES = [
+  { from: -1200, to: 960,  bg: 'bedroom',  name: 'ROOM 402' },
+  { from: 960,   to: 2860, bg: 'corridor', name: 'FOURTH FLOOR CORRIDOR' },
+  { from: 2860,  to: 3560, bg: 'service',  name: 'SERVICE STAIRS' },
+  { from: 3560,  to: 6600, bg: 'lobby',    name: 'LIFT LOBBY' },
+];
+
+const zoneAt = (x) => ZONES.find((z) => x >= z.from && x < z.to) || ZONES[ZONES.length - 1];
+
 function drawBackdrop(ctx, sim, view, bgs) {
   const { FLOOR1, FLOOR2 } = sim.level.consts;
   // warm dusty interior, going black below the lowest floor so a hole in the
@@ -162,22 +193,27 @@ function drawBackdrop(ctx, sim, view, bgs) {
   ctx.restore();
   ctx.globalAlpha = 1;
 
-  // the interior wall, one long painted strip, parallaxed a touch
+  // The wall, drawn per zone and parallaxed a touch. Each tile asks which room
+  // it is standing in, so the change of room happens at the doorway rather
+  // than wherever the tiling happened to land.
   const px = CAM.x * 0.06;
-  const bg = bgs.room;
-  if (bg) {
-    const h = 420;
-    const w = (bg.width / bg.height) * h;
-    ctx.globalAlpha = 0.95;
-    for (let x = Math.floor((CAM.x - 1600 + px) / w) * w; x < CAM.x + 1600; x += w) {
-      ctx.drawImage(bg, x - px, FLOOR1 - h + 4, w, h);
-      ctx.drawImage(bg, x - px, FLOOR2 - h + 4, w, h);
+  const H = 420;
+  const tile = (floorY) => {
+    const step = 460;
+    const first = Math.floor((CAM.x - 1500 + px) / step) * step;
+    for (let x = first; x < CAM.x + 1500; x += step) {
+      const z = zoneAt(x + step / 2);
+      const bg = bgs[z.bg] || bgs.room;
+      if (!bg) { wallpaper(ctx, x - px, floorY - 360, step + 2, 360); continue; }
+      const w = (bg.width / bg.height) * H;
+      ctx.drawImage(bg, 0, 0, bg.width, bg.height,
+        x - px, floorY - H + 4, Math.max(step + 2, w * 0.42), H);
     }
-    ctx.globalAlpha = 1;
-  } else {
-    wallpaper(ctx, CAM.x - 1600, FLOOR1 - 360, 3200, 360);
-    wallpaper(ctx, CAM.x - 1600, FLOOR2 - 360, 3200, 360);
-  }
+  };
+  ctx.globalAlpha = 0.97;
+  tile(FLOOR1);
+  tile(FLOOR2);
+  ctx.globalAlpha = 1;
 }
 
 function drawStatic(ctx, s) {
@@ -532,7 +568,20 @@ export function drawRoomState(ctx, sim, view, dt) {
   const lights = sim.mech.switches.find((s) => s.id === 'lights');
   const alarm = sim.mech.switches.find((s) => s.id === 'alarm');
 
-  if (lights && !lights.on) {
+  // a real blackout is darker than someone flicking the switch off
+  if (sim.blackout > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    ctx.fillStyle = '#2b3560';
+    ctx.fillRect(CAM.x - 2400, CAM.y - 1400, 4800, 2800);
+    ctx.restore();
+    // emergency lighting: a dim red wash from somewhere down the corridor
+    ctx.save();
+    ctx.globalAlpha = 0.13 + 0.05 * Math.sin(Date.now() / 700);
+    ctx.fillStyle = '#ff2d1f';
+    ctx.fillRect(CAM.x - 2400, CAM.y - 1400, 4800, 2800);
+    ctx.restore();
+  } else if (lights && !lights.on) {
     // not pitch black: dim, blue, and lit by whatever is still on
     ctx.save();
     ctx.globalCompositeOperation = 'multiply';
@@ -554,6 +603,16 @@ export function drawRoomState(ctx, sim, view, dt) {
       ctx.lineTo(x - 1.5, y + 13);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  if (sim.party > 0) {
+    // the ballroom system, which nobody asked for
+    ctx.save();
+    const hue = (Date.now() / 6) % 360;
+    ctx.globalAlpha = 0.13;
+    ctx.fillStyle = 'hsl(' + hue + ',90%,55%)';
+    ctx.fillRect(CAM.x - 2400, CAM.y - 1400, 4800, 2800);
     ctx.restore();
   }
 

@@ -54,8 +54,8 @@ const props = [
   { id: 'table1', type: 'table',  x: 3380, y: FLOOR1 - 34, w: 120, h: 62 , mass: 3.2 },
 
   // --- THE BROKEN SECTION on floor two -----------------------------------
-  { id: 'case3',  type: 'case',   x: 3760, y: FLOOR2 - 24, w: 70,  h: 46 , mass: 1.9 },
-  { id: 'plank2', type: 'plank',  x: 3900, y: FLOOR2 - 12, w: 330, h: 20 , mass: 2.4 },
+  { id: 'case3',  type: 'case',   x: 3640, y: FLOOR2 - 24, w: 70,  h: 46 , mass: 1.9 },
+  { id: 'plank2', type: 'plank',  x: 3700, y: FLOOR2 - 12, w: 520, h: 20 , mass: 3.2 },
   { id: 'crate5', type: 'crate',  x: 4380, y: FLOOR2 - 30, w: 58,  h: 58 , mass: 2.6 },
 
   // --- THE LOBBY of the emergency lift ------------------------------------
@@ -74,7 +74,7 @@ const statics = [
   { id: 'f_climb',  x: 2860, y: FLOOR1, w: 700,  h: 60 },
 
   // the upper floor, broken in the middle
-  { id: 'f2_a',   x: 3560, y: FLOOR2, w: 460, h: 44 },            // ends at 4020
+  { id: 'f2_a',   x: 3560, y: FLOOR2, w: 300, h: 44 },            // ends at 3860
   { id: 'f2_b',   x: 4300, y: FLOOR2, w: 200, h: 44 },            // island past the seesaw
   { id: 'f2_c',   x: 4500, y: FLOOR2, w: 820, h: 44 },            // lift lobby
 
@@ -252,6 +252,14 @@ export function buildLevel(Matter, world) {
     add(b);
     dynamic.push(b);
     mech.debris.push(b);
+  }
+
+  // The offsets of every vertex from its own centre, kept so a body whose
+  // position has gone non-finite can have its shape written back by hand.
+  for (const b of dynamic) {
+    b.plugin.vx = b.vertices.map((v) => v.x - b.position.x);
+    b.plugin.vy = b.vertices.map((v) => v.y - b.position.y);
+    if (!b.plugin.home) b.plugin.home = { x: b.position.x, y: b.position.y };
   }
 
   return { mech, dynamic, decor, statics, props, crumble,

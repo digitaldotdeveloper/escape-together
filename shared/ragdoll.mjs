@@ -62,12 +62,18 @@ export const TUNE = {
   standTorque: 0.34,    // how hard the torso fights to stay upright
   standDamp: 0.55,
   legTorque: 0.30,
-  runSpeed: 6.2,        // world units per step
-  accel: 0.20,          // how fast we approach runSpeed (low = clumsy)
-  airAccel: 0.06,
-  jumpImpulse: 11.5,
+  runSpeed: 7.0,        // world units per step
+  accel: 0.22,          // how fast we approach runSpeed (low = clumsy)
+  airAccel: 0.085,      // enough air control to aim a landing, not to fly
+  jumpImpulse: 13.2,
+  jumpSustain: 0.55,    // extra push per step while the button is held
+  jumpHold: 11,         // for at most this many steps
+  coyote: 7,            // still jumpable this long after leaving the ground
+  jumpBuffer: 9,        // a press this early still counts on landing
+  stepHeightMax: 40,    // anything lower than this is a step, not a wall
+  stepLift: 3.2,        // how briskly you are carried over it
   armSpan: 78,          // an arm is this long; the aim never reaches further
-  strength: 0.0055,     // the entire budget of one pair of legs. THE dial.
+  strength: 0.0062,     // the entire budget of one pair of legs. THE dial.
   tearDist: 110,        // a grip this far past its anchor has been torn off
   stepHeight: 0.55,     // leg swing amplitude while walking
   stepRate: 0.22,
@@ -124,6 +130,7 @@ export function makeRagdoll(Matter, { x, y, id, tint }) {
     grabs: { B: null, F: null },   // active grab constraints, per hand
     aim: null,   // world point the hands reach for; null = let them hang
     stun: 0, launched: 0, lastImpact: 0, lastVx: 0, tripped: 0,
+    coyote: 0, jumpBuffer: 0, rising: 0, tripChance: 0.1, stepping: 0, tripCool: 0, stepCool: 0,
     spawn: { x, y },
   };
   return rd;
@@ -190,11 +197,19 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   const turning = input.move !== 0 && Math.sign(input.move) !== Math.sign(vx)
     && Math.abs(vx) > 2.6;
   const stopping = Math.abs(rd.lastVx - vx) > 1.2;
-  if (rd.grounded && !rd.stun && rd.limp <= 0 && (turning || stopping)
-      && Math.random() < 0.4) {
-    rd.stun = Math.round(TUNE.getUpTime * 0.55);
-    rd.tripped = 14;
-    Body.setAngularVelocity(torso, torso.angularVelocity + Math.sign(vx || 1) * 0.24);
+  // One roll per reversal, not one per frame. Rolling every frame meant a
+  // nominal 8% chance became a near certainty over the twenty frames a turn
+  // takes, and the early game - which is supposed to feel steady - tripped
+  // half the time.
+  if (rd.tripCool > 0) rd.tripCool--;
+  if (rd.grounded && !rd.stun && rd.limp <= 0 && rd.tripCool <= 0
+      && (turning || stopping)) {
+    rd.tripCool = 45;
+    if (Math.random() < (rd.tripChance ?? 0.25)) {
+      rd.stun = Math.round(TUNE.getUpTime * 0.55);
+      rd.tripped = 14;
+      Body.setAngularVelocity(torso, torso.angularVelocity + Math.sign(vx || 1) * 0.24);
+    }
   }
   rd.lastVx = vx;
   if (rd.tripped > 0) rd.tripped--;
@@ -265,13 +280,91 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   const gripping = !moving || rd.bracing;
   for (const sh of [p.shinB, p.shinF]) sh.friction = gripping ? TUNE.braceFriction : 0.28;
 
+  // --- getting over things --------------------------------------------------
+  //
+  // Every platformer has this and it is invisible when it works: walking into
+  // something low should carry you over it, not stop you dead. Without it a
+  // ragdoll walks into the edge of a bed, the legs jam, the balance controller
+  // fights the wall, and the character shudders in place until you jump - which
+  // reads as the controls being broken rather than as the bed being there.
+  //
+  // Two probes: one at shin height, one a step higher. Something at the first
+  // and nothing at the second means "that is a step, not a wall".
+  //
+  // Only when actually BLOCKED. The first version probed the floor in front at
+  // shin height and fired whenever it found something - which included the very
+  // surface being stood on, because shins sink a few units into whatever they
+  // rest on. So it fired every frame while walking along a bed, pumping energy
+  // into the solver until the character's position went non-finite and the
+  // whole game stopped drawing. "Am I being stopped?" is the honest test.
+  if (rd.stepCool > 0) rd.stepCool--;
+  const wantMove = Math.abs(input.move) > 0.5;
+  const blocked = wantMove && Math.abs(torso.velocity.x) < 1.3;
+  if (rd.grounded > 0 && blocked && rd.stepCool <= 0 && rd.stun <= 0 && rd.limp <= 0) {
+    const dir = Math.sign(input.move);
+    const feet = Math.max(p.shinB.bounds.max.y, p.shinF.bounds.max.y);
+    const others = Composite.allBodies(world).filter((b) => b.plugin.owner !== rd.id);
+    const ahead = torso.position.x + dir * 26;
+    const low = Query.point(others, { x: ahead, y: feet - 16 });
+    const high = Query.point(others, { x: ahead, y: feet - TUNE.stepHeightMax });
+    const headroom = Query.point(others, { x: ahead, y: feet - 96 });
+
+    if (low.length && !high.length && !headroom.length) {
+      rd.stepping = 9;
+      rd.stepCool = 26;
+    }
+  }
+  if (rd.stepping > 0) {
+    rd.stepping--;
+    // a lift, not a jump: enough to clear a step, gone before it becomes flight
+    for (const b of [torso, p.head, p.thighB, p.thighF, p.shinB, p.shinF]) {
+      Body.setVelocity(b, {
+        x: b.velocity.x + rd.facing * 0.16,
+        y: Math.min(b.velocity.y, -TUNE.stepLift),
+      });
+    }
+  }
+
   // --- jump ----------------------------------------------------------------
-  if (input.jump && rd.grounded && rd.balance > 0.6 && !rd.jumpHeld) {
+  //
+  // Three things that every platformer has and this one did not:
+  //
+  //   coyote time  - you may still jump for a few frames after walking off an
+  //                  edge, because you pressed it when you MEANT to be on the
+  //                  ledge and the game should agree with you
+  //   buffering    - a press a few frames before landing is remembered and
+  //                  fires on touchdown, instead of being silently eaten
+  //   hold to rise - keeping the button down keeps pushing for a moment, so
+  //                  there is a short hop and a full jump rather than one
+  //                  fixed arc
+  //
+  // Together they are most of the difference between controls that feel
+  // responsive and controls that feel like they are ignoring you.
+  if (rd.grounded) rd.coyote = TUNE.coyote;
+  else if (rd.coyote > 0) rd.coyote--;
+
+  if (input.jump && !rd.jumpHeld) rd.jumpBuffer = TUNE.jumpBuffer;
+  else if (rd.jumpBuffer > 0) rd.jumpBuffer--;
+
+  if (rd.jumpBuffer > 0 && rd.coyote > 0 && rd.balance > 0.55 && rd.rising <= 0) {
     const j = TUNE.jumpImpulse;
     Body.setVelocity(torso, { x: torso.velocity.x, y: -j });
     for (const b of [p.thighB, p.thighF, p.shinB, p.shinF])
-      Body.setVelocity(b, { x: b.velocity.x, y: -j * 0.8 });
+      Body.setVelocity(b, { x: b.velocity.x, y: -j * 0.82 });
     rd.grounded = 0;
+    rd.coyote = 0;
+    rd.jumpBuffer = 0;
+    rd.rising = TUNE.jumpHold;
+  }
+
+  // held: keep pushing while the button is down and we are still going up
+  if (rd.rising > 0) {
+    rd.rising--;
+    if (input.jump && torso.velocity.y < 0) {
+      Body.setVelocity(torso, { x: torso.velocity.x, y: torso.velocity.y - TUNE.jumpSustain });
+    } else {
+      rd.rising = 0;
+    }
   }
   rd.jumpHeld = input.jump;
 

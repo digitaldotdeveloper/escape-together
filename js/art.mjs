@@ -141,7 +141,7 @@ const memory = new WeakMap();
 /** What this character is doing, expressed as one of the drawn poses. */
 export function poseFor(rd, dt) {
   let m = memory.get(rd);
-  if (!m) { m = { land: 0, air: false }; memory.set(rd, m); }
+  if (!m) { m = { land: 0, air: false, threw: 0, held: false }; memory.set(rd, m); }
   const t = rd.parts.torso;
   const moving = Math.abs(t.velocity.x) > 0.7;
   const airborne = !rd.grounded;
@@ -151,11 +151,51 @@ export function poseFor(rd, dt) {
   m.air = airborne;
   m.land = Math.max(0, m.land - (dt || 0.016));
 
+  // and so is letting go of something at speed, which is a throw
+  const holdingNow = !!(rd.grabs && (rd.grabs.F || rd.grabs.B));
+  if (m.held && !holdingNow && Math.abs(t.velocity.x) > 1.6) m.threw = 0.3;
+  m.held = holdingNow;
+  m.threw = Math.max(0, m.threw - (dt || 0.016));
+
+  const has = (n) => !!(rd.art$poses && rd.art$poses[n]);
+
+  // tripped: feet out from under you, which is its own drawing
+  if (rd.tripped > 0) return 'slip';
   if (rd.stun > 0 || rd.limp > 0) return 'stunned';
+
+  // climbing: hauling yourself over something, hands above your head
+  if (rd.stepping > 0 && !airborne) return 'climb';
+
   if (airborne) return t.velocity.y < -1.2 ? 'jump' : 'fall';
   if (m.land > 0) return 'land';
   if (rd.bracing) return 'brace';
-  if (rd.grabs && (rd.grabs.F || rd.grabs.B)) return moving ? 'push' : 'carry';
+
+  // holding something: which drawing depends on what you are doing with it
+  const holding = rd.grabs && (rd.grabs.F || rd.grabs.B);
+  if (holding) {
+    if (m.threw > 0) return 'throw';
+    if (moving) {
+      // pulling it behind you, or shoving it in front
+      const towards = Math.sign(t.velocity.x) === Math.sign(rd.facing);
+      if (!towards) return 'pull';
+      const f = Math.floor(rd.phase / Math.PI) & 1;
+      return ['carry1', 'carry2'][f];
+    }
+    return 'carry';
+  }
+
+  // reaching for something, before you have it
+  if (rd.reaching) {
+    const aim = rd.aim;
+    if (aim) {
+      const dy = aim.y - t.y;
+      if (dy > 34) return 'grabLow';
+      const behind = Math.sign(aim.x - t.x) !== Math.sign(rd.facing);
+      if (behind) return 'grabB';
+    }
+    return 'grabF';
+  }
+
   if (moving) {
     const f = Math.floor(rd.phase / (Math.PI / 2)) & 3;
     return ['walk1', 'walk2', 'walk3', 'walk4'][f];
@@ -167,7 +207,15 @@ export function poseFor(rd, dt) {
 export function drawPosed(ctx, rd, art, dt) {
   const set = art.poses;
   if (!set) return false;
-  const name = poseFor(rd, dt);
+  // A character whose newer poses have not been drawn yet must not simply
+  // vanish, so each falls back to the nearest older drawing.
+  const FALLBACK = {
+    grabF: 'push', grabB: 'push', grabLow: 'land', pull: 'push',
+    carry1: 'carry', carry2: 'carry', throw: 'push', climb: 'jump',
+    slip: 'stunned',
+  };
+  let name = poseFor(rd, dt);
+  if (!set.img[name]) name = FALLBACK[name] || 'idle';
   const p = set.meta.poses[name] || set.meta.poses.idle;
   const img = set.img[name] || set.img.idle;
   if (!p || !img) return false;

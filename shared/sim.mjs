@@ -19,6 +19,7 @@ import {
   PART_NAMES,
 } from './ragdoll.mjs';
 import { botInput, botRescue, BOT_FOLLOW, BOT_WAIT } from './bot.mjs';
+import { stepChaos, freshChaos, EVENTS, eventIndex } from './chaos.mjs';
 
 export const TICK_HZ = 60;
 export const SEND_HZ = 30;
@@ -79,7 +80,7 @@ export function createSim(Matter, { authority = false } = {}) {
       const mb = bodyB.isStatic ? Infinity : bodyB.mass;
       const mu = ma === Infinity ? mb : mb === Infinity ? ma : (ma * mb) / (ma + mb);
       const mag = speed * Math.min(mu, 14);
-      if (mag < 12) continue;
+      if (!Number.isFinite(mag) || mag < 12) continue;
       const c = pair.collision && pair.collision.supports && pair.collision.supports[0];
       impacts.push({
         x: c ? c.x : (bodyA.position.x + bodyB.position.x) / 2,
@@ -121,7 +122,11 @@ export function createSim(Matter, { authority = false } = {}) {
     timeLeft: ROUND_SECONDS * TICK_HZ,
     shake: 0,
     beat: 0,
-    checkpoint: SPAWNS.map((s) => ({ ...s })),
+    // Where to put somebody back: the ground line they were last standing on,
+    // not the position their torso happened to have. Storing a torso position
+    // meant a player who fell down a lift shaft was put back in mid-air, in
+    // the shaft, forever.
+    checkpoint: SPAWNS.map((s) => ({ x: s.x, y: s.y + 45 })),
     inputs: [{ ...EMPTY_INPUT }, { ...EMPTY_INPUT }],
     connected: [false, false],
     events: [],                // drained by the server each send
@@ -132,6 +137,15 @@ export function createSim(Matter, { authority = false } = {}) {
     wasWet: false,
     botAnchor: null,
     impacts,
+    // The hotel's own agenda, and how much of it there is. Difficulty is not a
+    // setting: it is how far in you are. The first minute is calm on purpose,
+    // because a game that is chaotic before you can walk is not funny, it is
+    // just confusing.
+    chaos: freshChaos(),
+    difficulty: 0,
+    blackout: 0,
+    party: 0,
+    wind: 0,
   };
 
   /* ------------------------------------------------------------- mechanisms */
@@ -219,8 +233,72 @@ export function createSim(Matter, { authority = false } = {}) {
     return load;
   }
 
+  /* How far in, and therefore how mean the building is allowed to be.
+   * Half from progress and half from the clock, so a slow careful pair still
+   * get an escalation and a fast one is not punished for being good. */
+  function updateDifficulty() {
+    const byBeat = sim.beat / Math.max(1, BEATS.length - 1);
+    const byClock = 1 - Math.max(0, sim.timeLeft) / (ROUND_SECONDS * TICK_HZ);
+    sim.difficulty = Math.max(0, Math.min(1, byBeat * 0.55 + byClock * 0.45));
+  }
+
+  /** Whatever the building is currently doing to you. */
+  function stepChaosEffects() {
+    const started = stepChaos(sim, TICK_HZ);
+    if (started) emit('chaos', { id: started });
+
+    // the lull between events shortens as things get worse
+    if (sim.chaos.next > 0 && sim.difficulty > 0.35) {
+      sim.chaos.next -= Math.random() < sim.difficulty * 0.9 ? 1 : 0;
+    }
+
+    sim.blackout = Math.max(0, sim.blackout - 1);
+    sim.party = Math.max(0, sim.party - 1);
+    sim.wind = Math.max(0, sim.wind - 1);
+
+    const id = sim.chaos.id;
+    if (!id) return;
+
+    if (id === 'power') {
+      sim.blackout = 4;
+      const lights = mech.switches.find((x) => x.id === 'lights');
+      if (lights) lights.on = false;
+    } else if (id === 'sprinklers') {
+      sim.sprinklers = Math.max(sim.sprinklers, 4);
+    } else if (id === 'party') {
+      sim.party = 4;
+    } else if (id === 'draught') {
+      sim.wind = 4;
+      // a steady shove along the corridor: enough to make carrying something
+      // awkward, nowhere near enough to move a person on its own
+      for (const b of level.dynamic) {
+        if (b.isStatic || b.plugin.parked) continue;
+        if (b.mass > 8) continue;
+        Body.applyForce(b, b.position, { x: -0.00012 * b.mass, y: 0 });
+      }
+    } else if (id === 'quake') {
+      const t = sim.chaos.left;
+      sim.shake = Math.min(1, sim.shake + 0.08);
+      if (t % 7 === 0) {
+        for (const b of level.dynamic) {
+          if (b.isStatic || b.plugin.parked) continue;
+          Body.setVelocity(b, {
+            x: b.velocity.x + (Math.random() - 0.5) * 2.4,
+            y: b.velocity.y - Math.random() * 1.2,
+          });
+        }
+        for (const rd of players) {
+          Body.setAngularVelocity(rd.parts.torso,
+            rd.parts.torso.angularVelocity + (Math.random() - 0.5) * 0.12);
+        }
+      }
+    }
+  }
+
   function stepMechanisms() {
     stepSwitches();
+    updateDifficulty();
+    stepChaosEffects();
     if (sim.sprinklers > 0) sim.sprinklers--;
     // --- pressure plate -> emergency shutter -------------------------------
     mech.plateLoad = totalLoadOn(mech.plate, 150, 70);
@@ -347,6 +425,62 @@ export function createSim(Matter, { authority = false } = {}) {
     if (sim.authority) sim.events.push({ type, ...data, tick: sim.tick });
   }
 
+  /* Anything whose position has stopped being a number.
+   *
+   * Matter moves a body by adding a delta to where it currently is, so once a
+   * position is NaN there is no way back through the normal API - and the NaN
+   * then spreads into collision reports, into the camera, and into the audio,
+   * where the browser throws rather than doing nothing. One sweep, twice a
+   * second, ends the whole family of bugs. */
+  /** Put a body's geometry back by hand. Nothing in Matter's API can move a
+   *  body whose position is already NaN, because every move is a delta. */
+  function repair(dst, src) {
+    for (let k = 0; k < dst.vertices.length && k < src.vertices.length; k++) {
+      dst.vertices[k].x = src.vertices[k].x;
+      dst.vertices[k].y = src.vertices[k].y;
+    }
+    dst.position.x = src.position.x;
+    dst.position.y = src.position.y;
+    dst.positionPrev.x = src.position.x;
+    dst.positionPrev.y = src.position.y;
+    dst.velocity.x = 0; dst.velocity.y = 0;
+    dst.angle = 0; dst.anglePrev = 0; dst.angularVelocity = 0;
+    dst.force.x = 0; dst.force.y = 0;
+    dst.torque = 0;
+    Matter.Bounds.update(dst.bounds, dst.vertices, dst.velocity);
+  }
+
+  function sweepBroken() {
+    for (const b of netBodies) {
+      if (Number.isFinite(b.position.x) && Number.isFinite(b.position.y)) continue;
+      if (b.plugin.owner) continue;                 // players are respawned instead
+      const home = b.plugin.home || { x: -1200, y: -800 };
+      const dx = home.x - (b.plugin.spawnX ?? home.x);
+      repair(b, {
+        vertices: b.vertices.map((v, k) => ({
+          x: home.x + (b.plugin.vx ? b.plugin.vx[k] : 0),
+          y: home.y + (b.plugin.vy ? b.plugin.vy[k] : 0),
+        })),
+        position: home,
+      });
+      if (b.plugin.kind === 'debris') b.plugin.parked = true;
+      else if (b.plugin.kind !== 'crumble') Body.setStatic(b, false);
+    }
+  }
+
+  /** Remember the ground each connected player is standing on. */
+  function saveCheckpoints() {
+    for (let i = 0; i < 2; i++) {
+      if (!sim.connected[i]) continue;
+      const rd = players[i];
+      if (rd.grounded <= 0 || rd.stun > 0) continue;
+      const t = rd.parts.torso.position;
+      const feet = Math.max(rd.parts.shinB.bounds.max.y, rd.parts.shinF.bounds.max.y);
+      if (feet > FLOOR1 + 60) continue;          // standing on something falling
+      sim.checkpoint[i] = { x: clamp(t.x, 60, LEVEL_END - 60), y: feet };
+    }
+  }
+
   function cameraFocus() {
     const a = players[0].parts.torso.position;
     const b = sim.connected[1] ? players[1].parts.torso.position : a;
@@ -357,10 +491,17 @@ export function createSim(Matter, { authority = false } = {}) {
     const rd = players[i];
     const cp = sim.checkpoint[i];
     for (const side of ['B', 'F']) releaseGrab(Matter, world, rd, side);
-    // rebuild the pose from scratch so nobody respawns already folded in half
-    const fresh = makeRagdoll(Matter, { x: cp.x, y: cp.y - 40, id: rd.id, tint: rd.tint });
+    // rebuild the pose from scratch so nobody respawns already folded in half,
+    // standing ON the checkpoint's floor rather than somewhere above it
+    const fresh = makeRagdoll(Matter, { x: cp.x, y: cp.y - 46, id: rd.id, tint: rd.tint });
     for (const name of PART_NAMES) {
       const src = fresh.parts[name], dst = rd.parts[name];
+      // setPosition moves by a delta FROM the current position, so a body that
+      // is already non-finite can never be moved back. Put its geometry back
+      // by hand first.
+      if (!Number.isFinite(dst.position.x) || !Number.isFinite(dst.position.y)) {
+        repair(dst, src);
+      }
       Body.setPosition(dst, src.position);
       Body.setAngle(dst, 0);
       Body.setVelocity(dst, { x: 0, y: 0 });
@@ -372,20 +513,45 @@ export function createSim(Matter, { authority = false } = {}) {
 
   function checkProgress() {
     const focus = cameraFocus();
-    while (sim.beat < BEATS.length - 1 && focus.x > BEATS[sim.beat + 1].at) {
+
+    // Progress only counts if it was made on your feet. Falling past a marker
+    // used to advance the beat and hand out its checkpoint, so missing the
+    // jump over the broken section put you down on the FAR side of the hole
+    // you had just failed to cross - which quietly deleted the puzzle.
+    const standing = players.some((rd, i) => sim.connected[i] && rd.grounded > 0);
+
+    while (sim.beat < BEATS.length - 1 && focus.x > BEATS[sim.beat + 1].at && standing) {
       sim.beat++;
       emit('beat', { beat: sim.beat });
-      // a checkpoint per beat, so a wipe costs a laugh and not the level
-      for (let i = 0; i < 2; i++) {
-        const t = players[i].parts.torso.position;
-        sim.checkpoint[i] = { x: clamp(t.x, 60, LEVEL_END - 60), y: Math.min(t.y, FLOOR1 - 60) };
-      }
+      saveCheckpoints();
     }
+
+    // and keep the checkpoint fresh while they are safely on the ground, so a
+    // fall costs you the last few paces rather than the last few minutes
+    if (sim.tick % 30 === 0) saveCheckpoints();
 
     for (let i = 0; i < 2; i++) {
       const rd = players[i];
       const t = rd.parts.torso.position;
-      if (t.y > FLOOR1 + 380 || t.x < -200) respawn(i, 'fell');
+
+      // A character whose position has gone non-finite is gone for good: every
+      // later move is computed as a delta from NaN. Rebuild them rather than
+      // leaving an invisible player and a camera that can no longer draw.
+      if (!Number.isFinite(t.x) || !Number.isFinite(t.y)) {
+        respawn(i, 'broke');
+        continue;
+      }
+
+      // Out of the world by depth, or simply stuck somewhere below it. The
+      // depth test alone was not enough: a player could come to rest on a
+      // ledge in the shaft, above the threshold, not grounded, and stay there
+      // for the rest of the match with nothing to do and no way back.
+      const belowTheFloor = t.y > FLOOR1 + 120;
+      rd.lost = belowTheFloor && rd.grounded <= 0 ? (rd.lost || 0) + 1 : 0;
+      if (t.y > FLOOR1 + 380 || t.x < -200 || rd.lost > 150) {
+        rd.lost = 0;
+        respawn(i, 'fell');
+      }
       if (rd.launched > 40) { emit('yeet', { player: i }); rd.launched = 0; }
     }
 
@@ -433,6 +599,9 @@ export function createSim(Matter, { authority = false } = {}) {
       const input = sim.connected[i] ? sim.inputs[i] : EMPTY_INPUT;
 
       // grab is edge-triggered: press to take hold, release to let go
+      // reaching: the button is down but nothing has been caught yet
+      rd.reaching = !!input.grab && !rd.grabs.F && !rd.grabs.B;
+
       if (input.grab && !input.wasGrab) {
         const bodies = Composite.allBodies(world);
         tryGrab(Matter, world, rd, 'F', bodies);
@@ -443,6 +612,10 @@ export function createSim(Matter, { authority = false } = {}) {
       }
       input.wasGrab = input.grab;
 
+      // Smooth at the start, comic later. A character who trips over their own
+      // feet in the first ten seconds reads as broken controls; the same
+      // character tripping in a blackout during an earthquake reads as a joke.
+      rd.tripChance = 0.06 + sim.difficulty * 0.62;
       stepRagdoll(Matter, world, rd, input, players);
       enforceGrabs(Matter, world, rd);
     }
@@ -458,10 +631,12 @@ export function createSim(Matter, { authority = false } = {}) {
       const rd = players[1];
       if (sim.botAnchor === null) sim.botAnchor = rd.parts.torso.position.x;
       const err = sim.botAnchor - rd.parts.torso.position.x;
-      const pull = Math.max(-1.6, Math.min(1.6, err * 0.12));
+      // stiff enough to survive being walked into, which is the only force
+      // that ever actually moves it
+      const pull = Math.max(-2.6, Math.min(2.6, err * 0.26));
       for (const name of ['torso', 'thighB', 'thighF', 'shinB', 'shinF']) {
         const b = rd.parts[name];
-        Body.setVelocity(b, { x: b.velocity.x * 0.5 + pull, y: b.velocity.y });
+        Body.setVelocity(b, { x: b.velocity.x * 0.34 + pull, y: b.velocity.y });
       }
     } else {
       sim.botAnchor = null;
@@ -469,6 +644,7 @@ export function createSim(Matter, { authority = false } = {}) {
 
     stepMechanisms();
     Matter.Engine.update(engine, 1000 / TICK_HZ);
+    if (sim.tick % 30 === 0) sweepBroken();
     checkProgress();
     sim.tick++;
   };
@@ -512,7 +688,7 @@ export function createSim(Matter, { authority = false } = {}) {
 
   /* -------------------------------------------------------------- snapshots */
 
-  const HEAD = 10;
+  const HEAD = 12;
   const PER_BODY = 6;
   const PER_PLAYER = 14;
   const FLOATS = HEAD + netBodies.length * PER_BODY + 2 * PER_PLAYER;
@@ -533,6 +709,8 @@ export function createSim(Matter, { authority = false } = {}) {
     let bits = sim.sprinklers > 0 ? 1 : 0;
     mech.switches.forEach((sw, i) => { if (sw.on) bits |= 2 << i; });
     f[9] = bits;
+    f[10] = sim.chaos.id ? eventIndex(sim.chaos.id) + 1 : 0;
+    f[11] = sim.difficulty;
 
     let o = HEAD;
     for (const b of netBodies) {
@@ -555,6 +733,17 @@ export function createSim(Matter, { authority = false } = {}) {
 
   /** Lean this world toward the authority's. `k` 0..1 - how hard to lean. */
   sim.applySnapshot = (f, k = 0.35) => {
+    // A snapshot of the wrong length is not a snapshot, it is somebody else's
+    // data read as ours: every body lands somewhere arbitrary, positions go
+    // non-finite within seconds, and the symptom appears in the camera and the
+    // audio rather than anywhere near the cause. Ask once, refuse clearly.
+    // (Which is exactly what happened: a server left running across a change
+    // to the header size cost an hour of hunting a "physics explosion".)
+    if (f.length !== FLOATS) {
+      sim.protocolMismatch = true;
+      return;
+    }
+    sim.protocolMismatch = false;
     sim.tick = f[0];
     sim.state = ['playing', 'escaped', 'collapsed'][f[1]] || 'playing';
     sim.timeLeft = f[2];
@@ -570,6 +759,12 @@ export function createSim(Matter, { authority = false } = {}) {
     const bits = Math.round(f[9]);
     sim.sprinklers = (bits & 1) ? 1 : 0;
     mech.switches.forEach((sw, i) => { sw.on = !!(bits & (2 << i)); });
+    const ev = Math.round(f[10]);
+    sim.chaos.id = ev > 0 && EVENTS[ev - 1] ? EVENTS[ev - 1].id : null;
+    sim.difficulty = f[11];
+    sim.blackout = sim.chaos.id === 'power' ? 4 : 0;
+    sim.party = sim.chaos.id === 'party' ? 4 : 0;
+    sim.wind = sim.chaos.id === 'draught' ? 4 : 0;
 
     let o = HEAD;
     for (const b of netBodies) {

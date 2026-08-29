@@ -60,6 +60,9 @@ function tone({ freq, dur = 0.2, type = 'square', gain = 0.1, at = 0, to, attack
   // soundtrack with it.
   if (!ctx) return;
   if (dest === musicGain ? !audio.musicOn : !audio.soundOn) return;
+  // One NaN upstream turns into a thrown exception here rather than a quiet
+  // silence, and takes the whole frame with it.
+  if (![freq, dur, gain, at].every(Number.isFinite) || dur <= 0) return;
   const t = now() + at;
   const o = ctx.createOscillator();
   const g = ctx.createGain();
@@ -79,6 +82,7 @@ function tone({ freq, dur = 0.2, type = 'square', gain = 0.1, at = 0, to, attack
 function noise({ dur = 0.2, gain = 0.12, at = 0, band = 0, q = 1, dest = null }) {
   if (!ctx) return;
   if (dest === musicGain ? !audio.musicOn : !audio.soundOn) return;
+  if (![dur, gain, at].every(Number.isFinite) || dur <= 0) return;
   const t = now() + at;
   const n = Math.max(1, Math.floor(ctx.sampleRate * dur));
   const buf = ctx.createBuffer(1, n, ctx.sampleRate);

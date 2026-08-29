@@ -18,9 +18,10 @@ import { createInput } from './input.mjs';
 import { loadChar, preloadCast, CAST } from './art.mjs';
 import {
   CAM, updateCamera, applyCamera, screenToWorld, drawWorld, drawDust,
-  drawRoomState,
+  drawRoomState, ZONES,
 } from './render.mjs';
 import { UI } from './ui.mjs';
+import { eventById } from '../shared/chaos.mjs';
 import { wake, setMusic, setEnabled, audio, sfx, audioNodes } from './audio.mjs';
 import { initVoice, say, step as footstep } from './voice.mjs';
 import {
@@ -78,6 +79,8 @@ const G = {
   banner: null,
   endShown: false,
   ping: null,
+  zoneName: null,
+  zoneAt: 0,
 };
 G.sim.connected = [true, false];
 
@@ -124,6 +127,10 @@ function moment(kind) {
 function handleSnapshot(f) {
   // The first snapshot is the truth, wholesale; after that we only lean.
   G.sim.applySnapshot(f, G.firstSnap ? 1 : 0.34);
+  if (G.sim.protocolMismatch) {
+    UI.setStatus('THIS PAGE IS OUT OF DATE - RELOAD');
+    return;
+  }
   G.firstSnap = false;
   G.history.push(f);
   if (G.history.length > 130) G.history.shift();
@@ -157,6 +164,18 @@ function handleEvent(ev) {
   if (ev.type === 'tileGo') { punch(0.3); chips(ev.x, 620, 8, 1.6, '120,110,100'); }
   if (ev.type === 'shutterSlam') { punch(0.7); freeze(70); dust(ev.x, 600, 12, 2.4); }
   if (ev.type === 'press') star(ev.x, ev.y - 20);
+  if (ev.type === 'chaos') {
+    const e = eventById(ev.id);
+    if (e) {
+      G.chaosBanner = { name: e.name, sub: e.sub, t: 0 };
+      punch(0.5);
+      if (ev.id === 'quake') { freeze(90); sfx.rumble(); }
+      if (ev.id === 'power') sfx.slam();
+      if (ev.id === 'sprinklers') sfx.alarm();
+      if (ev.id === 'party') sfx.ding();
+      if (ev.id === 'draught') sfx.whoosh(1);
+    }
+  }
   if (ev.type === 'yeet') moment('yeet');
   if (ev.type === 'respawn' && ev.why === 'fell') moment('fell');
   // escaped / collapsed are deliberately NOT handled here: they are read off
@@ -584,6 +603,55 @@ function drawHUD(dt) {
     }
   }
 
+  // the hotel announcing what it has decided to do
+  if (G.chaosBanner) {
+    const b = G.chaosBanner;
+    b.t += dt;
+    const a = b.t < 0.35 ? b.t / 0.35 : b.t > 3.6 ? Math.max(0, (4.4 - b.t) / 0.8) : 1;
+    if (a <= 0) G.chaosBanner = null;
+    else {
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.textAlign = 'center';
+      const y = h < 520 ? h * 0.34 : h * 0.32;
+      ctx.font = '900 ' + (w < 620 ? 22 : 30) + 'px system-ui, sans-serif';
+      ctx.fillStyle = '#ff8a5e';
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.lineWidth = 7;
+      ctx.strokeText(b.name, w / 2, y);
+      ctx.fillText(b.name, w / 2, y);
+      ctx.font = '600 13px system-ui, sans-serif';
+      ctx.fillStyle = '#fff2d8';
+      ctx.strokeText(b.sub, w / 2, y + 24);
+      ctx.fillText(b.sub, w / 2, y + 24);
+      ctx.restore();
+    }
+  }
+
+  // where you are: the name of the room, fading in when it changes
+  const here = ZONES.find((z) => {
+    const x = sim.cameraFocus().x;
+    return x >= z.from && x < z.to;
+  });
+  if (here && here.name !== G.zoneName) {
+    G.zoneName = here.name;
+    G.zoneAt = 2.4;
+  }
+  if (G.zoneAt > 0) {
+    G.zoneAt -= dt;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, G.zoneAt) * 0.8;
+    ctx.textAlign = 'center';
+    ctx.font = '800 13px system-ui, sans-serif';
+    ctx.fillStyle = '#ffd85e';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 4;
+    const y = h < 520 ? 36 : 74;
+    ctx.strokeText(G.zoneName, w / 2, y);
+    ctx.fillText(G.zoneName, w / 2, y);
+    ctx.restore();
+  }
+
   // clock + progress
   const secs = Math.max(0, Math.ceil(sim.timeLeft / TICK_HZ));
   const mm = String(Math.floor(secs / 60)).padStart(2, '0');
@@ -887,10 +955,10 @@ function drawMenuScene(dt) {
   G.arts[0] = await loadChar('gary');
   G.arts[1] = await loadChar('brick');
 
-  for (const [key, src] of [['room', asset('bg/room.webp')]]) {
+  for (const key of ['room', 'bedroom', 'corridor', 'service', 'lobby']) {
     const im = new Image();
     im.onload = () => { G.bgs[key] = im; };
-    im.src = src;
+    im.src = asset('bg/' + key + '.webp');
   }
 
   // skipping the tutorial, by key or by tapping the corner of its card
