@@ -199,8 +199,7 @@ export function joinRoom(code, handlers) {
     handlers.status && handlers.status(
       attempt > 1 ? 'STILL LOOKING…' : 'LOOKING FOR THAT ROOM…');
 
-    peer.on('open', (id) => {
-      window.__p2pLog = (window.__p2pLog || []).concat('attempt ' + attempt + ' peer open as ' + id);
+    peer.on('open', () => {
       // RELIABLE: this channel carries the handshake, retry and reset as well
       // as the snapshots, and a lost control message breaks the game silently.
       const conn = peer.connect(PREFIX + code, { reliable: true, serialization: 'binary' });
@@ -222,8 +221,6 @@ export function joinRoom(code, handlers) {
     });
 
     peer.on('error', (e) => {
-      window.__p2pLog = (window.__p2pLog || []).concat(
-        'attempt ' + attempt + ' error: ' + e.type + ' / ' + (e.message || ''));
       if (settled) return;
       if (e.type !== 'peer-unavailable' && e.type !== 'network') {
         settled = true;
