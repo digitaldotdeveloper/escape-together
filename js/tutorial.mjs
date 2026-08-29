@@ -138,14 +138,15 @@ export function createTutorial() {
     draw(ctx, view, isTouch, waitingForPartner) {
       if (!t.active && t.finishedAt <= 0) return;
       const w = view.w, h = view.h;
+      // A phone on its side is short, so the card is compact and tucks under
+      // the clock in the top-left, where neither thumb ever goes.
+      const squat = h < 520;
       const narrow = w < 620;
-      const cw = Math.min(narrow ? w - 28 : 440, w - 28);
-      const ch = narrow ? 92 : 104;
-      const x = narrow ? 14 : 20;
-      // On a phone the bottom of the screen belongs to the thumbs - the card
-      // was sitting directly on top of the GRAB and BRACE buttons - so it goes
-      // up under the clock instead, where nothing is ever pressed.
-      const y = narrow ? 214 : 96;
+      const compact = squat || narrow;
+      const cw = Math.min(compact ? 330 : 440, w - 28);
+      const ch = compact ? 84 : 104;
+      const x = compact ? 14 : 20;
+      const y = squat ? 76 : (narrow ? 214 : 96);
 
       ctx.save();
       ctx.translate(x, y);
@@ -184,17 +185,17 @@ export function createTutorial() {
       }
 
       ctx.fillStyle = '#ffd85e';
-      ctx.font = '900 ' + (narrow ? 18 : 21) + 'px system-ui, sans-serif';
-      ctx.fillText(waiting ? 'WAIT FOR YOUR FRIEND' : step.title, 16, narrow ? 48 : 52);
+      ctx.font = '900 ' + (compact ? 17 : 21) + 'px system-ui, sans-serif';
+      ctx.fillText(waiting ? 'WAIT FOR YOUR FRIEND' : step.title, 16, compact ? 44 : 52);
 
       ctx.fillStyle = '#fff2d8';
-      ctx.font = '700 ' + (narrow ? 12 : 13) + 'px system-ui, sans-serif';
+      ctx.font = '700 ' + (compact ? 11 : 13) + 'px system-ui, sans-serif';
       ctx.fillText(waiting ? 'This one takes two of you.' : (isTouch ? step.touch : step.keys),
-        16, narrow ? 68 : 74);
+        16, compact ? 62 : 74);
 
       ctx.fillStyle = 'rgba(255,242,216,0.55)';
-      ctx.font = '500 ' + (narrow ? 11 : 12) + 'px system-ui, sans-serif';
-      ctx.fillText(step.hint, 16, narrow ? 84 : 94);
+      ctx.font = '500 ' + (compact ? 10 : 12) + 'px system-ui, sans-serif';
+      ctx.fillText(step.hint, 16, compact ? 77 : 94);
 
       ctx.fillStyle = 'rgba(255,242,216,0.38)';
       ctx.font = '600 10px system-ui, sans-serif';

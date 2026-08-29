@@ -252,19 +252,64 @@ code { background: rgba(255,216,94,.16); padding: 1px 7px; border-radius: 6px; c
 .rotatecard h2 { margin: 16px 0 6px; }
 .rotatecard p { color: rgba(255, 242, 216, .74); margin: 0; font-size: 14px; }
 
-/* a phone that tips upright, so the instruction needs no reading */
+/* a phone that tips onto its side, so the instruction needs no reading */
 .phone {
-  width: 104px; height: 62px; margin: 0 auto;
+  width: 62px; height: 104px; margin: 0 auto;
   border: 4px solid var(--gold); border-radius: 12px;
   position: relative; transform-origin: 50% 50%;
-  animation: tipUp 2.4s ease-in-out infinite;
+  animation: tipOver 2.4s ease-in-out infinite;
 }
 .phone span {
   position: absolute; inset: 7px; border-radius: 5px;
   background: rgba(255, 216, 94, .22);
 }
-@keyframes tipUp {
+@keyframes tipOver {
   0%, 34% { transform: rotate(0deg); }
-  58%, 88% { transform: rotate(-90deg); }
+  58%, 88% { transform: rotate(90deg); }
   100% { transform: rotate(0deg); }
+}
+
+/* ------------------------------------------- a phone, held the right way up
+
+   Landscape on a phone is about 390 pixels tall. The menu is a stack of eight
+   buttons designed for a tall screen and simply does not fit, so it becomes
+   two columns and everything optional gets out of the way. */
+
+@media (orientation: landscape) and (max-height: 560px) {
+  .screen { padding: 10px 16px; gap: 6px; }
+  /* the triple drop shadow is taller than the leading at this size, so the
+     first word's shadow lands inside the second one */
+  .logo {
+    font-size: clamp(26px, 8.5vh, 52px); line-height: 1.06;
+    text-shadow: 0 3px 0 var(--gold-deep), 0 7px 12px rgba(0, 0, 0, .6);
+  }
+  .logo span { text-shadow: 0 3px 0 #b8703c, 0 7px 12px rgba(0, 0, 0, .55); }
+  .tagline { letter-spacing: .22em; font-size: 10px; margin-top: 2px; }
+  .pitch, .footnote { display: none; }
+  .badges { gap: 6px; }
+  .badge { font-size: 9px; padding: 3px 8px; }
+  .brandwrap { gap: 4px; }
+  .menucols { gap: 16px; margin-top: 2px; }
+  .menuside { display: none; }
+  .mainbuttons {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 7px;
+  }
+  .btn { min-width: 150px; padding: 8px 14px; font-size: 13px; border-radius: 12px; }
+  .btn.big { grid-column: 1 / -1; font-size: 16px; padding: 10px 20px; }
+  .back { top: 8px; left: 10px; }
+  h2 { font-size: clamp(18px, 5.5vh, 28px); }
+  .sub { font-size: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); gap: 8px; }
+  .card { padding: 8px; border-radius: 14px; }
+  .card img { height: 92px; }
+  .card .quip { display: none; }
+  .card .thumb { height: 64px; font-size: 28px; }
+  .codebox { font-size: clamp(26px, 8vh, 42px); padding: 8px 12px 8px 22px; }
+  .code { font-size: 28px; padding: 10px 8px 10px 20px; }
+  .slot img { height: 70px; }
+  .slot { width: 116px; }
+  .form { width: min(460px, 92vw); gap: 6px; }
+  .form input, .form select, .form textarea { padding: 6px 10px; font-size: 13px; }
+  .perks, .roadmap, .keys { font-size: 12px; }
+  .toggle { padding: 7px 12px; }
 }

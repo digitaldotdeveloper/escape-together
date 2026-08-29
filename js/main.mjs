@@ -407,15 +407,20 @@ function drawHUD(dt) {
       ctx.save();
       ctx.globalAlpha = a;
       ctx.textAlign = 'center';
+      // On a phone held sideways the top-left is the tutorial card and the two
+      // bottom corners are thumbs, so the banner takes the one strip nothing
+      // else wants: bottom centre.
       const narrow = w < 620;
-      const by = narrow ? 132 : 92;
-      ctx.font = (narrow ? '900 26px' : '900 34px') + ' system-ui, sans-serif';
+      const squat = h < 520;
+      const by = squat ? h - 74 : (narrow ? 132 : 92);
+      ctx.font = (squat ? '900 24px' : narrow ? '900 26px' : '900 34px') +
+        ' system-ui, sans-serif';
       ctx.fillStyle = '#ffd85e';
       ctx.strokeStyle = 'rgba(0,0,0,0.75)';
       ctx.lineWidth = 7;
       ctx.strokeText(G.banner.beat.title, w / 2, by);
       ctx.fillText(G.banner.beat.title, w / 2, by);
-      ctx.font = (narrow ? '600 13px' : '600 16px') + ' system-ui, sans-serif';
+      ctx.font = (squat || narrow ? '600 13px' : '600 16px') + ' system-ui, sans-serif';
       ctx.fillStyle = '#fff2d8';
       ctx.strokeText(G.banner.beat.hint, w / 2, by + 26);
       ctx.fillText(G.banner.beat.hint, w / 2, by + 26);

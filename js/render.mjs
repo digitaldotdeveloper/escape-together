@@ -30,10 +30,13 @@ export function updateCamera(sim, view, dt, soloFocus) {
   // can no longer read a face, and the game stops being funny.
   const spanX = Math.abs(a.x - b.x) + 330;
   const spanY = Math.abs(a.y - b.y) + 300;
-  // On a tall phone the height is not the constraint - obeying it would zoom
-  // in until the two of you no longer fit side by side. Only ever let height
-  // pull the zoom DOWN, never up past what the width can take.
-  const fit = Math.min(view.w / spanX, Math.max(view.h, view.w * 0.62) / spanY);
+  // On a TALL screen the height is not the real constraint - obeying it would
+  // zoom in until the two of you no longer fit side by side - so it is allowed
+  // to pull the zoom down only so far. On a wide screen, which is how the game
+  // is meant to be held, the height is a genuine limit and is obeyed.
+  const tall = view.h > view.w;
+  const hLimit = tall ? Math.max(view.h, view.w * 0.62) : view.h;
+  const fit = Math.min(view.w / spanX, hLimit / spanY);
   const zoom = clamp(fit, 0.55, 1.55);
 
   const k = 1 - Math.pow(0.0016, dt);
@@ -43,10 +46,10 @@ export function updateCamera(sim, view, dt, soloFocus) {
   // sit the pair low in frame: there is always more happening above them
   // (ceilings, debris, the floor they are trying to reach) than below. On a
   // portrait screen there is more spare room, so push them lower still.
-  // On a portrait phone the bottom quarter of the screen is thumbs and
-  // buttons, so the action is kept nearer the middle rather than pushed down
-  // into the controls.
-  const lowness = view.h > view.w ? 0.02 : 0.10;
+  // Held sideways, the controls take the two bottom corners rather than a
+  // whole band, so the pair can sit a little lower in frame and leave room
+  // above them for ceilings, debris and the floor they are trying to reach.
+  const lowness = tall ? 0.02 : 0.08;
   CAM.y = lerp(CAM.y, midY - view.h * lowness / zoom, k);
   CAM.zoom = lerp(CAM.zoom, zoom, k * 0.7);
 

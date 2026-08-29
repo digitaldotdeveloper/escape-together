@@ -27,6 +27,9 @@ export const KEYMAP = {
  * and the hit-testing both read this, because when they were written out
  * separately they drifted and pressing GRAB jumped.
  *
+ * The game is played with the phone sideways, so the controls hug the two
+ * bottom corners where the thumbs already are.
+ *
  * Steering is bottom left. Bottom right is a cluster of three:
  *
  *              [ JUMP  ]
@@ -59,20 +62,31 @@ export function controlLayout(view) {
   const right = (px) => w - px * s;
   const bottom = (px) => h - px * s - sab;
 
-  const rx = right(78);          // the resting thumb
-  const ry = bottom(88);
-  const step = 100 * s;          // centre to centre: adjacent, never overlapping
+  // A phone on its side is only about 390 tall, so the cluster is tightened up
+  // and the whole thing sits lower; there is no room to stack it the way a
+  // portrait screen allows.
+  const squat = h < 520;
+  const r0 = (squat ? 42 : 47) * s;
+  const rx = right(squat ? 66 : 78);        // the resting thumb
+  const ry = bottom(squat ? 66 : 88);
+  const step = (squat ? 88 : 100) * s;      // centre to centre: adjacent, never overlapping
+  const stickHome = { x: (squat ? 78 : 88) * s, y: bottom(squat ? 74 : 104) };
+  const stickMax = (squat ? 50 : 58) * s;
+  const jumpY = ry - step;
+
   return {
     scale: s,
-    stickMax: 58 * s,
+    stickMax,
     stickZone: w * 0.46,
-    stickHome: { x: 88 * s, y: bottom(104) },
-    // the strip the controls live over, darkened so they always have contrast
-    scrimTop: h - (250 * s + sab),
+    stickHome,
+    // The darkened strip is only as tall as the controls that sit on it. A
+    // fixed 250px band is two thirds of a landscape phone, which puts a grey
+    // wash over most of the game.
+    scrimTop: Math.min(jumpY - r0 - 26 * s, stickHome.y - stickMax - 26 * s),
     buttons: [
-      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: 47 * s, x: rx,        y: ry,        latch: true },
-      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: 45 * s, x: rx,        y: ry - step },
-      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: 45 * s, x: rx - step, y: ry },
+      { id: 'grab',  label: 'GRAB',  glyph: 'pinch', r: r0,        x: rx,        y: ry, latch: true },
+      { id: 'jump',  label: 'JUMP',  glyph: 'up',    r: r0 * 0.96, x: rx,        y: jumpY },
+      { id: 'brace', label: 'BOOST', glyph: 'cup',   r: r0 * 0.96, x: rx - step, y: ry },
     ],
   };
 }
