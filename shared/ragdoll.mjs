@@ -70,8 +70,12 @@ export const TUNE = {
   jumpHold: 11,         // for at most this many steps
   coyote: 7,            // still jumpable this long after leaving the ground
   jumpBuffer: 9,        // a press this early still counts on landing
-  stepHeightMax: 46,    // anything lower than this is a step, not a wall
-  stepLift: 4.4,        // measured against a 34-tall step: 3.2 fell short
+  // Anything lower than this is a step, not a wall. It was 46, and a suitcase
+  // is 48: you could pick your luggage up, put it down, and then be stopped
+  // dead by it forever, which reads as the controls having given up. A crate
+  // is 58 and still needs a jump, which is what crates are for.
+  stepHeightMax: 54,
+  stepLift: 5.2,        // enough to clear 54; 4.4 cleared 34 and no more
   armSpan: 78,          // an arm is this long; the aim never reaches further
   strength: 0.0062,     // the entire budget of one pair of legs. THE dial.
   tearDist: 110,        // a grip this far past its anchor has been torn off
@@ -131,6 +135,7 @@ export function makeRagdoll(Matter, { x, y, id, tint }) {
     aim: null,   // world point the hands reach for; null = let them hang
     stun: 0, launched: 0, lastImpact: 0, lastVx: 0, tripped: 0,
     coyote: 0, jumpBuffer: 0, rising: 0, tripChance: 0.1, stepping: 0, tripCool: 0, stepCool: 0,
+    stuck: 0, skid: 0, flail: 0,
     spawn: { x, y },
   };
   return rd;
@@ -224,7 +229,13 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   // --- torso and head try to stand up ------------------------------------
   // Lean into the direction of travel: it looks eager, and it is what makes
   // a hard stop pitch you onto your face.
-  const leanTarget = clamp(input.move * 0.22 + torso.velocity.x * 0.012, -0.35, 0.35);
+  // Leaning is where almost all of the comedy in a walk cycle lives, and the
+  // old numbers were an apology. Lean hard into a start, and - the good bit -
+  // lean BACKWARDS while overrunning a stop, feet ahead of your centre of mass
+  // like a man on ice who has decided to commit.
+  const leanTarget = rd.skid > 0
+    ? clamp(-Math.sign(torso.velocity.x) * 0.30, -0.34, 0.34)
+    : clamp(input.move * 0.34 + torso.velocity.x * 0.020, -0.48, 0.48);
   poseTo(Matter, torso, leanTarget, TUNE.standTorque, TUNE.standDamp, A);
   poseTo(Matter, p.head, leanTarget * 0.5, 0.30, 0.5, A);
 
@@ -275,10 +286,24 @@ export function stepRagdoll(Matter, world, rd, input, all) {
       Body.applyForce(b, b.position, { x: f, y: 0 });
     }
   }
+  // Letting go of the stick at a run does not stop you. You keep going for
+  // another few strides with your arms up, which is the single funniest thing
+  // a walking character can do and costs the player nothing: they were
+  // stopping anyway, and the overrun is short and always in the direction
+  // they were already committed to.
+  if (rd.skid > 0) rd.skid--;
+  if (!moving && rd.grounded > 0 && Math.abs(torso.velocity.x) > 4.4
+      && rd.skid <= 0 && rd.stun <= 0) {
+    rd.skid = 20;
+  }
+  const skidding = rd.skid > 0 && !moving;
+
   // Feet grip when you are standing and slide when you are running: high
   // friction is what lets you brace, and it is also what nails you to the spot.
-  const gripping = !moving || rd.bracing;
-  for (const sh of [p.shinB, p.shinF]) sh.friction = gripping ? TUNE.braceFriction : 0.28;
+  const gripping = (!moving && !skidding) || rd.bracing;
+  for (const sh of [p.shinB, p.shinF]) {
+    sh.friction = gripping ? TUNE.braceFriction : (skidding ? 0.05 : 0.28);
+  }
 
   // --- getting over things --------------------------------------------------
   //
@@ -300,16 +325,32 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   if (rd.stepCool > 0) rd.stepCool--;
   const wantMove = Math.abs(input.move) > 0.5;
   const blocked = wantMove && Math.abs(torso.velocity.x) < 1.3;
+  // How long you have been trying to walk and not walking. A character who
+  // can be permanently stopped by a 34-unit step is not funny, he is broken.
+  rd.stuck = (blocked && rd.grounded > 0) ? rd.stuck + 1 : 0;
+
   if (rd.grounded > 0 && blocked && rd.stepCool <= 0 && rd.stun <= 0 && rd.limp <= 0) {
     const dir = Math.sign(input.move);
     const feet = Math.max(p.shinB.bounds.max.y, p.shinF.bounds.max.y);
     const others = Composite.allBodies(world).filter((b) => b.plugin.owner !== rd.id);
-    const ahead = torso.position.x + dir * 26;
-    const low = Query.point(others, { x: ahead, y: feet - 16 });
-    const high = Query.point(others, { x: ahead, y: feet - TUNE.stepHeightMax });
-    const headroom = Query.point(others, { x: ahead, y: feet - 96 });
-
-    if (low.length && !high.length && !headroom.length) {
+    // Probe from the TOES, not from the middle of the chest. A single probe 26
+    // units in front of the torso sits behind your own feet, so a character
+    // stopped dead by a step - or by his own swinging arm hitting it first -
+    // probed thin air, found nothing to climb, and ground against it forever.
+    const toe = dir > 0
+      ? Math.max(p.shinB.bounds.max.x, p.shinF.bounds.max.x)
+      : Math.min(p.shinB.bounds.min.x, p.shinF.bounds.min.x);
+    let found = false;
+    let clear = true;
+    for (const reach of [4, 18, 32]) {
+      const ahead = toe + dir * reach;
+      const low = Query.point(others, { x: ahead, y: feet - 14 });
+      const high = Query.point(others, { x: ahead, y: feet - TUNE.stepHeightMax });
+      const headroom = Query.point(others, { x: ahead, y: feet - 96 });
+      if (headroom.length) clear = false;
+      if (low.length && !high.length && !headroom.length) { found = true; break; }
+    }
+    if (found) {
       rd.stepping = 12;
       rd.stepCool = 22;
     }
@@ -382,7 +423,19 @@ export function stepRagdoll(Matter, world, rd, input, all) {
   // no aim at all the hands hang by the hips instead of at the world origin.
   if (input.aim) rd.aim = input.aim;
   const rest = { x: torso.position.x + rd.facing * 24, y: torso.position.y + 30 };
-  let aim = rd.aim || rest;
+  // Falling with nothing to hold and nowhere to point: windmill. Purely
+  // decorative - the hands are springs toward a target and this only moves the
+  // target - so it cannot cost you a landing, and it is worth the whole scene.
+  const flailing = !rd.grounded && !rd.aim && !rd.grabs.F && !rd.grabs.B
+    && rd.stun <= 0 && rd.limp <= 0;
+  if (flailing) rd.flail += 0.46; else rd.flail = 0;
+  // Centred at hip height, NOT above the head. Two hand springs both pulling
+  // toward a point above the torso every frame is a helicopter: it added
+  // enough lift to clear a gap that is supposed to need two people.
+  let aim = flailing
+    ? { x: torso.position.x + Math.cos(rd.flail) * 44,
+        y: torso.position.y + 24 + Math.sin(rd.flail) * 30 }
+    : (rd.aim || rest);
   {
     const dx = aim.x - torso.position.x, dy = aim.y - torso.position.y;
     const d = Math.hypot(dx, dy);
@@ -397,12 +450,17 @@ export function stepRagdoll(Matter, world, rd, input, all) {
     const held = rd.grabs[side];
     // the far arm trails a little, so the two arms never overlap perfectly
     const off = side === 'B' ? 10 : -4;
-    const tx = aim.x + off * rd.facing;
-    const ty = aim.y + (side === 'B' ? 6 : 0);
+    let tx = aim.x + off * rd.facing;
+    let ty = aim.y + (side === 'B' ? 6 : 0);
+    if (flailing && side === 'B') {
+      // half a turn behind, so it reads as windmilling and not as semaphore
+      tx = torso.position.x + Math.cos(rd.flail + Math.PI) * 44;
+      ty = torso.position.y + 24 + Math.sin(rd.flail + Math.PI) * 30;
+    }
     const dx = tx - hand.position.x;
     const dy = ty - hand.position.y;
     const d = Math.hypot(dx, dy) || 1;
-    const pull = Math.min(d, 90) * reach * (held ? 0.35 : 1);
+    const pull = Math.min(d, 90) * reach * (held ? 0.35 : 1) * (flailing ? 0.6 : 1);
     // Reaching upward is capped hard. Without this the two hand springs are a
     // pair of helicopter blades and the character calmly hovers to the ceiling.
     const uy = (dy / d) * pull;
@@ -423,25 +481,95 @@ export function stepRagdoll(Matter, world, rd, input, all) {
 
 /* ----------------------------------------------------------------- grabbing */
 
-/** Grab whatever is under the given hand. Returns the constraint, or null. */
-export function tryGrab(Matter, world, rd, side, bodies) {
-  const { Constraint, Composite, Vector } = Matter;
-  if (rd.grabs[side]) return rd.grabs[side];
-  const hand = rd.parts['farm' + side];
-  const hp = { x: hand.position.x + hand.velocity.x * 2, y: hand.position.y + 10 };
+/* Where you are reaching.
+ *
+ * Not "wherever the hand happens to be". The hands are ragdoll parts: they
+ * swing, they trail behind, they end up behind your back halfway through a
+ * stride - so searching from the hand meant the same button press picked a
+ * different object depending on which frame you pressed it in, which is
+ * exactly what "it grabs random things" feels like.
+ *
+ * You reach where you are pointing, and if you are pointing nowhere you reach
+ * in front of you at about knee height, because that is where the things on
+ * the floor are.
+ */
+function reachPoints(rd, aim) {
+  const t = rd.parts.torso.position;
+  // Always: in front of you, at about knee height. This is where the things on
+  // the floor are, and it is what you mean when you walk up to a suitcase and
+  // press the button without thinking about where the cursor is.
+  const front = { x: t.x + rd.facing * 34, y: t.y + 30 };
+  // And, if you are actually pointing at something, there - because reaching
+  // for a ledge above you or for your friend is a real thing to want.
+  const a = aim || rd.aim;
+  if (!a) return [front];
+  const dx = a.x - t.x, dy = a.y - t.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(1, TUNE.armSpan / d);
+  return [{ x: t.x + dx * k, y: t.y + dy * k }, front];
+}
 
-  let best = null, bestD = 34; // grab radius
+/** Where the hands end up once they have hold of something. */
+function reachPoint(rd, aim) { return reachPoints(rd, aim)[0]; }
+
+/* The ONE thing this press is going to take hold of.
+ *
+ * Picked once, for both hands. Letting each hand search on its own meant the
+ * left hand could take the bed while the right took a lump of ceiling, and the
+ * character would then walk off holding two unrelated objects at arm's length
+ * with no way to tell which one the release was going to drop.
+ *
+ * A real prop beats scenery of the same distance, because when a suitcase is
+ * at your feet and a wall is behind you, you meant the suitcase.
+ */
+export function pickGrab(Matter, rd, bodies, aim) {
+  const { Vertices } = Matter;
+  // The aim MUST come from this tick's input. Reading the ragdoll's remembered
+  // aim meant the first press after moving searched wherever you were pointing
+  // a moment ago, and picked up whatever happened to be standing there - which
+  // is precisely what "it grabs random things" feels like from the outside.
+  const points = reachPoints(rd, aim);
+  let best = null, bestScore = 68;
   for (const b of bodies) {
     if (b.isStatic && !b.plugin.grabbable) continue;
     if (b.plugin.owner === rd.id) continue;
     if (b.plugin.noGrab) continue;
-    // distance to the body's closest vertex is good enough and very cheap
+    if (b.plugin.parked) continue;      // debris waiting off-stage to fall
     let d = Infinity;
-    for (const v of b.vertices) d = Math.min(d, Math.hypot(v.x - hp.x, v.y - hp.y));
-    d = Math.min(d, Math.hypot(b.position.x - hp.x, b.position.y - hp.y) - 6);
-    if (d < bestD) { bestD = d; best = b; }
+    for (const hp of points) {
+      // standing with your hand inside something counts as touching it, which
+      // matters for anything wide: the nearest CORNER of a bed is far away
+      if (Vertices.contains(b.vertices, hp)) { d = 0; break; }
+      for (const v of b.vertices) d = Math.min(d, Math.hypot(v.x - hp.x, v.y - hp.y));
+    }
+    const score = d - (b.plugin.propId ? 26 : 0);
+    if (score < bestScore) { bestScore = score; best = b; }
   }
+  return best;
+}
+
+/** Take hold of `target` with one hand. Returns the constraint, or null. */
+export function tryGrab(Matter, world, rd, side, bodies, target, aim) {
+  const { Constraint, Composite } = Matter;
+  if (rd.grabs[side]) return rd.grabs[side];
+  const hand = rd.parts['farm' + side];
+  const best = target || pickGrab(Matter, rd, bodies, aim);
   if (!best) return null;
+  // hold it where you actually took hold of it
+  let hp = reachPoint(rd, aim);
+  if (!Matter.Vertices.contains(best.vertices, hp)) {
+    let d = Infinity;
+    for (const v of best.vertices) {
+      const k = Math.hypot(v.x - hp.x, v.y - hp.y);
+      if (k < d) { d = k; }
+    }
+    // pull the anchor onto the object rather than leaving it hanging in the
+    // air beside it, which made a held prop dangle off the fingertips
+    const dx = best.position.x - hp.x, dy = best.position.y - hp.y;
+    const m = Math.hypot(dx, dy) || 1;
+    const step = Math.min(m, d + 4);
+    hp = { x: hp.x + (dx / m) * step, y: hp.y + (dy / m) * step };
+  }
 
   const c = Constraint.create({
     bodyA: hand,

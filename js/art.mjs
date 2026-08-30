@@ -141,15 +141,24 @@ const memory = new WeakMap();
 /** What this character is doing, expressed as one of the drawn poses. */
 export function poseFor(rd, dt) {
   let m = memory.get(rd);
-  if (!m) { m = { land: 0, air: false, threw: 0, held: false }; memory.set(rd, m); }
+  if (!m) {
+    m = { land: 0, air: false, threw: 0, held: false, coyote: 0, runPhase: 0 };
+    memory.set(rd, m);
+  }
   const t = rd.parts.torso;
   const moving = Math.abs(t.velocity.x) > 0.7;
   const airborne = !rd.grounded;
 
   // a landing is a moment, not a state, so it has to be remembered briefly
   if (m.air && !airborne) m.land = 0.22;
+  // Walking off a ledge at speed does not stop your legs. They carry on for a
+  // quarter of a second over open air before it occurs to you, which is the
+  // oldest joke in animation and still the best one.
+  if (!m.air && airborne && Math.abs(t.velocity.x) > 3.6) m.coyote = 0.26;
   m.air = airborne;
   m.land = Math.max(0, m.land - (dt || 0.016));
+  m.coyote = Math.max(0, m.coyote - (dt || 0.016));
+  m.runPhase += (dt || 0.016) * 16;
 
   // and so is letting go of something at speed, which is a throw
   const holdingNow = !!(rd.grabs && (rd.grabs.F || rd.grabs.B));
@@ -163,10 +172,22 @@ export function poseFor(rd, dt) {
   if (rd.tripped > 0) return 'slip';
   if (rd.stun > 0 || rd.limp > 0) return 'stunned';
 
+  // Overrunning a stop. The feet-forward, arms-back drawing is exactly what a
+  // man who has stopped asking his legs for permission looks like, and it is
+  // the single funniest half second in the walk.
+  if (rd.skid > 0 && !airborne && Math.abs(t.velocity.x) > 2.4) return 'slip';
+
   // climbing: hauling yourself over something, hands above your head
   if (rd.stepping > 0 && !airborne) return 'climb';
 
-  if (airborne) return t.velocity.y < -1.2 ? 'jump' : 'fall';
+  if (airborne) {
+    // still running, briefly, on nothing at all
+    if (m.coyote > 0 && t.velocity.y > -1.2 && t.velocity.y < 3.2) {
+      const f = Math.floor(m.runPhase / (Math.PI / 2)) & 3;
+      return ['walk1', 'walk2', 'walk3', 'walk4'][f];
+    }
+    return t.velocity.y < -1.2 ? 'jump' : 'fall';
+  }
   if (m.land > 0) return 'land';
   if (rd.bracing) return 'brace';
 
@@ -238,10 +259,13 @@ export function drawPosed(ctx, rd, art, dt) {
     + ((parts.shinB.position.x + parts.shinF.position.x) / 2) * 0.3;
   const ay = feet;
 
-  const loose = name === 'stunned' || name === 'fall';
+  // A loose pose is allowed to point wherever the physics is pointing; an
+  // upright one is kept within a lean, so a bad frame cannot draw a walking
+  // man sideways.
+  const loose = name === 'stunned' || name === 'fall' || name === 'slip';
   const lean = loose
     ? parts.torso.angle
-    : Math.max(-0.4, Math.min(0.4, parts.torso.angle));
+    : Math.max(-0.52, Math.min(0.52, parts.torso.angle));
 
   // contact shadow
   ctx.save();
@@ -254,6 +278,11 @@ export function drawPosed(ctx, rd, art, dt) {
 
   ctx.save();
   ctx.translate(ax, ay);
+  // A bounce on every stride. The shadow is drawn on the floor before this, so
+  // the character lifts off it rather than dragging it along - which is the
+  // difference between a walk and a slide.
+  const striding = rd.grounded > 0 && Math.abs(parts.torso.velocity.x) > 1.1;
+  if (striding) ctx.translate(0, -Math.abs(Math.sin(rd.phase)) * 3.2);
   ctx.rotate(lean);
   if (rd.facing < 0) ctx.scale(-1, 1);
 

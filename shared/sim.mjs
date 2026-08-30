@@ -16,8 +16,8 @@
 import { buildLevel, FLOOR1, FLOOR2, levelById } from './level.mjs';
 import { DEFAULT_LEVEL } from './levels.mjs';
 import {
-  makeRagdoll, addRagdoll, stepRagdoll, tryGrab, releaseGrab, enforceGrabs,
-  PART_NAMES,
+  makeRagdoll, addRagdoll, stepRagdoll, tryGrab, pickGrab, releaseGrab,
+  enforceGrabs, PART_NAMES,
 } from './ragdoll.mjs';
 import { botInput, botRescue, BOT_FOLLOW, BOT_WAIT } from './bot.mjs';
 import { stepChaos, freshChaos, EVENTS, eventIndex } from './chaos.mjs';
@@ -208,16 +208,26 @@ export function createSim(Matter, { authority = false, level: levelId = DEFAULT_
         let touched = false;
         for (const side of ['B', 'F']) {
           const hand = rd.parts['farm' + side].position;
-          if (Math.hypot(hand.x - sw.x, hand.y - sw.y) < 50) touched = true;
+          // Generous, deliberately. Hands are ragdoll parts: they swing, they
+          // trail, and a switch you have to line up with is not a switch, it
+          // is a chore. You are standing next to it - that is the intent.
+          if (Math.hypot(hand.x - sw.x, hand.y - sw.y) < 64) touched = true;
         }
-        // Edge-triggered on the button, NOT on a cooldown. A cooldown means
-        // standing next to a light switch with GRAB held strobes it twice a
-        // second, which is not a light switch, it is a nightclub.
-        const pressing = touched && !!sim.inputs[i].grab;
-        const was = sw.held && sw.held[i];
+        // Edge-triggered on the BUTTON, and only on the button. Triggering on
+        // "touching it while the button is down" looks the same until you are
+        // also holding something: your hands wobble in and out of the switch
+        // while you drag a fire extinguisher past it, and every wobble is a
+        // fresh press. One press of the button is one press of the switch.
+        // One flip per press of the button, but it may land at any point
+        // during that press. Demanding that your hand already be in range on
+        // the very first frame meant walking up to a switch with the button
+        // already held did nothing at all, forever; and toggling whenever a
+        // held hand wobbled into range turned a light switch into a nightclub.
+        const holding = !!sim.inputs[i].grab;
         if (!sw.held) sw.held = [false, false];
-        sw.held[i] = pressing;
-        if (!pressing || was) continue;
+        if (!holding) { sw.held[i] = false; continue; }
+        if (sw.held[i] || !touched) continue;
+        sw.held[i] = true;
         sw.on = !sw.on;
         emit('press', { id: sw.id, on: sw.on, x: sw.x, y: sw.y });
 
@@ -673,9 +683,15 @@ export function createSim(Matter, { authority = false, level: levelId = DEFAULT_
       rd.reaching = !!input.grab && !rd.grabs.F && !rd.grabs.B;
 
       if (input.grab && !input.wasGrab) {
+        // ONE target, then both hands on it. Each hand choosing for itself is
+        // how you end up holding a bed in one arm and a lump of ceiling in the
+        // other, with the release dropping whichever it felt like.
         const bodies = Composite.allBodies(world);
-        tryGrab(Matter, world, rd, 'F', bodies);
-        tryGrab(Matter, world, rd, 'B', bodies);
+        const target = pickGrab(Matter, rd, bodies, input.aim);
+        if (target) {
+          tryGrab(Matter, world, rd, 'F', bodies, target, input.aim);
+          tryGrab(Matter, world, rd, 'B', bodies, target, input.aim);
+        }
       } else if (!input.grab && input.wasGrab) {
         releaseGrab(Matter, world, rd, 'F');
         releaseGrab(Matter, world, rd, 'B');
