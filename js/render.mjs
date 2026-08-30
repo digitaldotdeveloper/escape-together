@@ -41,7 +41,13 @@ export function updateCamera(sim, view, dt, soloFocus, extraShake = 0) {
   const tall = view.h > view.w;
   const hLimit = tall ? Math.max(view.h, view.w * 0.62) : view.h;
   const fit = Math.min(view.w / spanX, hLimit / spanY);
-  const zoom = clamp(fit, 0.5, 1.05);
+  // A scene that declares its own top and bottom gets framed by them: zoom in
+  // far enough that nothing outside the room is on screen. Only ever applied
+  // when there is one person to follow - with two, "both of you fit" wins.
+  const B = sim.level.def.bounds;
+  const alone = !sim.connected[1];
+  const boundZoom = (B && alone) ? view.h / (B.bottom - B.top) : 0;
+  const zoom = clamp(Math.max(fit, boundZoom), 0.5, 1.9);
 
   // A single non-finite body position propagates into the camera and then into
   // every gradient and transform drawn from it, and the canvas throws rather
@@ -68,6 +74,14 @@ export function updateCamera(sim, view, dt, soloFocus, extraShake = 0) {
   const lowness = tall ? 0.02 : 0.08;
   CAM.y = lerp(CAM.y, midY - view.h * lowness / zoom, k);
   CAM.zoom = lerp(CAM.zoom, zoom, k * 0.7);
+
+  // and having zoomed to fit the room, stay inside it
+  if (B && alone) {
+    const half = view.h / (2 * CAM.zoom);
+    CAM.y = (B.bottom - B.top) < half * 2
+      ? (B.top + B.bottom) / 2
+      : clamp(CAM.y, B.top + half, B.bottom - half);
+  }
 
   CAM.shake = Math.max(Math.max(sim.shake, extraShake), CAM.shake - dt * 1.2);
   const s = CAM.shake * 16;
@@ -230,13 +244,62 @@ function drawBackdrop(ctx, sim, view, bgs) {
     }
   };
   ctx.globalAlpha = 0.97;
-  tile(FLOOR1);
-  tile(FLOOR2);
+  // Only the storeys this level actually has. Tiling FLOOR2 unconditionally
+  // hung a strip of corridor wall in mid-air across the top of every
+  // single-storey scene.
+  for (const floorY of (sim.level.def.floors || [FLOOR1, FLOOR2])) tile(floorY);
   ctx.globalAlpha = 1;
+
+  // Close the room in. The paintings end 300 units above the floor and the
+  // ceiling sits a little higher than that, and the gap between them was
+  // empty gradient - a stripe of outdoors inside a hotel bedroom.
+  for (const floorY of (sim.level.def.floors || [FLOOR1, FLOOR2])) {
+    const top = floorY - H + 4;
+    const c = ctx.createLinearGradient(0, top - 150, 0, top + 2);
+    c.addColorStop(0, '#241a1c');
+    c.addColorStop(1, '#4a332c');
+    ctx.fillStyle = c;
+    ctx.fillRect(CAM.x - 2400, top - 150, 4800, 152);
+    ctx.fillStyle = 'rgba(255,226,180,0.10)';
+    ctx.fillRect(CAM.x - 2400, top - 8, 4800, 5);
+  }
 }
 
 function drawStatic(ctx, s) {
   const { x, y, w, h, id } = s;
+  if (s.look === 'rubble') {
+    // A pile of the ceiling on the floor. It was being drawn with the generic
+    // wall shader, which made the one thing in the room you are meant to climb
+    // over look like a floating white slab.
+    ctx.fillStyle = '#2a1c18';
+    ctx.fillRect(x, y + h - 8, w, 8);
+    const art = PROP_ART.debris;
+    if (art) {
+      // Chunks of different sizes, overlapping, some of them tipped over and
+      // some half buried. Evenly spaced identical copies read as a pattern,
+      // and a pattern reads as a mistake.
+      const n = Math.max(3, Math.round(w / 46));
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1 || 1);
+        const k = (i * 2654435761) % 1000 / 1000;      // stable per chunk
+        const dh = (h + 12) * (0.62 + k * 0.62);
+        const dw = dh * art.aspect;
+        ctx.save();
+        ctx.globalAlpha = 0.94;
+        ctx.translate(x + 10 + t * (w - 20), y + h - dh * 0.34 + k * 6);
+        ctx.rotate((k - 0.5) * 0.9);
+        ctx.drawImage(art.im, -dw / 2, -dh / 2, dw, dh);
+        ctx.restore();
+      }
+      // dust settling in the gaps, and a shadow where it meets the floor
+      ctx.fillStyle = 'rgba(30,18,16,0.35)';
+      ctx.fillRect(x - 4, y + h - 6, w + 8, 6);
+    } else {
+      ctx.fillStyle = '#cbb99c';
+      ctx.fillRect(x, y, w, h);
+    }
+    return;
+  }
   if (id === 'vent_sill') {
     // the way out of room 402, framed in metal so it reads as a way out
     ctx.fillStyle = C.metalDark;
@@ -248,20 +311,36 @@ function drawStatic(ctx, s) {
     return;
   }
   if (id.startsWith('f')) {
-    // a floor slab: concrete underside, carpet on top
-    ctx.fillStyle = C.concreteDark;
+    // A floor slab. The old one was a 60-unit block of grey with a 7-unit
+    // stripe of carpet on it, and since the camera now frames the room that
+    // grey was a fifth of the screen. It is a carpet, a brass nosing and then
+    // the dark under the boards - the floor should end, not continue.
+    ctx.fillStyle = '#140c0e';
     ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = C.concrete;
-    ctx.fillRect(x, y, w, 8);
     ctx.fillStyle = C.carpet;
-    ctx.fillRect(x, y, w, 7);
+    ctx.fillRect(x, y, w, 16);
+    // the runner down the middle of the corridor, worn through in places
     ctx.fillStyle = C.carpetB;
-    for (let i = x - (x % 60); i < x + w; i += 60) ctx.fillRect(i, y, 30, 7);
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(x, y + h - 5, w, 5);
+    for (let i = x - (x % 74); i < x + w; i += 74) ctx.fillRect(i, y + 3, 38, 10);
+    ctx.fillStyle = 'rgba(255,214,150,0.13)';
+    for (let i = x - (x % 74); i < x + w; i += 74) ctx.fillRect(i + 44, y + 5, 12, 5);
+    ctx.fillStyle = C.gold;
+    ctx.globalAlpha = 0.5;
+    ctx.fillRect(x, y + 16, w, 3);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#2a1a18';
+    ctx.fillRect(x, y + 19, w, 9);
+    const u = ctx.createLinearGradient(0, y + 28, 0, y + h);
+    u.addColorStop(0, '#241618');
+    u.addColorStop(1, '#0b0709');
+    ctx.fillStyle = u;
+    ctx.fillRect(x, y + 28, w, h - 28);
   } else {
-    // a wall: plaster with a shaded return, so a gap in it reads as a doorway
-    ctx.fillStyle = C.plaster;
+    // A wall: plaster with a shaded return, so a gap in it reads as a doorway.
+    // The far end wall is in shadow rather than lit - a full-height slab of
+    // bright plaster at the edge of the level pulled the eye straight off the
+    // character and onto nothing.
+    ctx.fillStyle = h > 300 ? '#8e7a5e' : C.plaster;
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = 'rgba(120,80,50,0.18)';
     ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
@@ -276,7 +355,37 @@ function drawStatic(ctx, s) {
 
 /* --------------------------------------------------------------- the props */
 
+/* Painted prop sprites, keyed by prop kind, filled in by the loader. */
+export const PROP_ART = {};
+
+/* Draw the painted sprite for a prop, if there is one.
+ *
+ * The physics box and the painting are not the same shape and should not be
+ * forced to be: the box is what you collide with, the painting is what the
+ * thing looks like. Match the width, keep the drawn proportions, and stand it
+ * on the bottom of the box so furniture sits on the floor rather than hovering
+ * above it or sinking into it.
+ */
+function paintedProp(ctx, b, kind) {
+  const art = PROP_ART[kind];
+  if (!art) return false;
+  const W = b.plugin.w || (b.bounds.max.x - b.bounds.min.x);
+  const H = b.plugin.h || (b.bounds.max.y - b.bounds.min.y);
+  // A tall thin thing is sized by its height, a wide flat thing by its width,
+  // so neither ends up hanging out of the room.
+  const byW = W / art.aspect;
+  const scale = byW >= H * 0.72 ? W : H * art.aspect;
+  const dw = scale, dh = scale / art.aspect;
+  ctx.save();
+  ctx.translate(b.position.x, b.position.y);
+  ctx.rotate(b.angle);
+  ctx.drawImage(art.im, -dw / 2, H / 2 - dh, dw, dh);
+  ctx.restore();
+  return true;
+}
+
 function propArt(ctx, b, kind) {
+  if (paintedProp(ctx, b, kind)) return;
   const w = b.bounds.max.x - b.bounds.min.x;
   const h = b.bounds.max.y - b.bounds.min.y;
   ctx.save();
@@ -378,15 +487,27 @@ function propArt(ctx, b, kind) {
     case 'plank':
       shadedBox(ctx, x, y, W, H, '#c08a4c', C.wood, 2);
       break;
-    case 'debris':
-      ctx.fillStyle = C.concrete;
+    case 'debris': {
+      // What came off the ceiling: old plaster, with the paint still on the
+      // side that used to be the ceiling and bare lath on the broken side.
       ctx.beginPath();
       ctx.moveTo(x, y + H * 0.3); ctx.lineTo(x + W * 0.4, y);
       ctx.lineTo(x + W, y + H * 0.2); ctx.lineTo(x + W * 0.8, y + H);
       ctx.lineTo(x + W * 0.1, y + H * 0.85); ctx.closePath();
+      ctx.fillStyle = '#d8c8ae';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#efe6d4';
+      ctx.fillRect(x, y, W, H * 0.34);
+      ctx.fillStyle = 'rgba(120,86,54,0.30)';
+      for (let i = 0; i < W; i += 9) ctx.fillRect(x + i, y + H * 0.45, 5, H);
+      ctx.fillStyle = 'rgba(60,38,26,0.22)';
+      ctx.fillRect(x, y + H * 0.44, W, 3);
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(52,32,22,0.42)'; ctx.lineWidth = 2; ctx.stroke();
       break;
+    }
     case 'crumble':
       ctx.fillStyle = C.carpet;
       ctx.fillRect(x, y, W, 6);

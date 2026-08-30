@@ -112,11 +112,12 @@ export function buildLevel(Matter, world, levelId = DEFAULT_LEVEL) {
     mech.shutter = shutter;
   }
   if (L.plate) {
-    const plate = Bodies.rectangle(L.plate.x, FLOOR1 - 7, 150, 16, {
+    const pw = L.plate.w || 150;
+    const plate = Bodies.rectangle(L.plate.x, FLOOR1 - 7, pw, 16, {
       isStatic: true, label: 'mech:plate', friction: 0.9,
     });
     plate.plugin.kind = 'plate';
-    plate.plugin.w = 150; plate.plugin.h = 16;
+    plate.plugin.w = pw; plate.plugin.h = 16;
     add(plate);
     dynamic.push(plate);
     mech.plate = plate;

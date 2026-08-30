@@ -18,7 +18,7 @@ import { createInput } from './input.mjs';
 import { loadChar, preloadCast, CAST } from './art.mjs';
 import {
   CAM, updateCamera, applyCamera, screenToWorld, drawWorld, drawDust,
-  drawRoomState, zonesFor,
+  drawRoomState, zonesFor, PROP_ART,
 } from './render.mjs';
 import { UI } from './ui.mjs';
 import { eventById } from '../shared/chaos.mjs';
@@ -146,8 +146,9 @@ function syncEndScreen() {
   if (over === G.endShown) return;
   G.endShown = over;
   if (!over) return UI.hideEnd();
-  if (G.sim.state === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true); }
-  else { sfx.fail(); moment('collapsed'); UI.showEnd(false); }
+  const alone = !!G.sim.level.def.solo;
+  if (G.sim.state === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true, alone); }
+  else { sfx.fail(); moment('collapsed'); UI.showEnd(false, alone); }
 }
 
 function handleEvent(ev) {
@@ -985,6 +986,17 @@ function drawMenuScene(dt) {
     im.onload = () => { G.bgs[key] = im; };
     im.src = asset('bg/' + key + '.webp');
   }
+
+  // Painted props. Anything without one falls back to the drawn box, so a
+  // missing render is a plain suitcase rather than an invisible one.
+  try {
+    const meta = await (await fetch(asset('props/props.json'))).json();
+    for (const kind of Object.keys(meta)) {
+      const im = new Image();
+      im.onload = () => { PROP_ART[kind] = { im, ...meta[kind] }; };
+      im.src = asset('props/' + kind + '.webp');
+    }
+  } catch { /* no painted props yet; the drawn ones still work */ }
 
   // skipping the tutorial, by key or by tapping the corner of its card
   addEventListener('keydown', (e) => {

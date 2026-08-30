@@ -138,10 +138,13 @@ export const UI = {
     $('#lobbyslots').innerHTML = slots.join('');
   },
 
-  showEnd(won) {
-    $('#endtitle').textContent = won ? 'YOU BOTH GOT OUT' : 'MISSION SUCCESSFULLY FAILED';
+  showEnd(won, alone = false) {
+    $('#endtitle').textContent = won
+      ? (alone ? 'YOU GOT OUT' : 'YOU BOTH GOT OUT')
+      : 'MISSION SUCCESSFULLY FAILED';
     $('#endsub').textContent = won
-      ? 'Against every reasonable expectation.'
+      ? (alone ? 'Nobody saw how. That is probably for the best.'
+        : 'Against every reasonable expectation.')
       : 'The hotel is now a car park. Go again?';
     $('#endscreen').classList.add('show');
   },

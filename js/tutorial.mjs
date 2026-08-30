@@ -57,9 +57,9 @@ const STEPS = [
   {
     id: 'plate',
     title: 'THE DOOR IS SHUT',
-    keys: 'Put something heavy on the plate and walk through',
-    touch: 'Put something heavy on the plate and walk through',
-    hint: 'You are not heavy enough on your own. The suitcase is.',
+    keys: 'Leave the suitcase on the plate, then walk through',
+    touch: 'Leave the suitcase on the plate, then walk through',
+    hint: 'You cannot stand on it and be over there at the same time.',
     check: (s) => s.doorOpen,
   },
 ];

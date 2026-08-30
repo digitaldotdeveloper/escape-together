@@ -30,6 +30,13 @@ const SOLO1 = {
   end: 2300,
   spawns: [{ x: 200, y: FLOOR1 - 120 }, { x: 260, y: FLOOR1 - 120 }],
 
+  // One storey, and the camera is not allowed to look outside it. Without
+  // this the frame showed 720 units of a 340-unit room: a painted wall in a
+  // band across the middle with bare fill above and below it, which reads as
+  // a half-finished level rather than as a hotel room.
+  floors: [FLOOR1],
+  bounds: { top: 236, bottom: 700 },
+
   // Three. One to knock over, one to carry, and a bed to wake up on. Nothing
   // in the route is blocked by scenery: the only things in the way are the
   // ones the scene is teaching.
@@ -41,18 +48,28 @@ const SOLO1 = {
 
   statics: [
     { id: 'f_room', x: -120, y: FLOOR1, w: 1500, h: 60 },
-    { id: 'f_hall', x: 1440, y: FLOOR1, w: 1000, h: 60 },
+    // butted up against the room floor: the gap that used to be here was a
+    // pit in the middle of the tutorial that nothing warned you about
+    { id: 'f_hall', x: 1380, y: FLOOR1, w: 1060, h: 60 },
     { id: 'w_left', x: -140, y: 120, w: 40, h: 560 },
     { id: 'ceil',   x: -120, y: 250, w: 2500, h: 30 },
-    // the step you have to get over, low enough that walking into it works
-    { id: 'step',   x: 1120, y: FLOOR1 - 34, w: 140, h: 34 },
+    // the step you have to get over, low enough that walking into it works.
+    // It is a heap of what used to be the ceiling, not a white block.
+    { id: 'step',   x: 1120, y: FLOOR1 - 34, w: 140, h: 34, look: 'rubble' },
     { id: 'w_end',  x: 2280, y: 120, w: 40, h: 560 },
   ],
 
-  // one pressure plate and one door: put something heavy on it, walk through
-  plate: { x: 1620, needs: 2.0 },
-  // It shuts slowly, so standing on the plate and sprinting is a valid, silly
-  // answer as well as the sensible one of leaving the suitcase on it.
+  // One pressure plate and one door. The puzzle is NOT "be heavy enough" - a
+  // person already outweighs the plate's threshold, so standing on it works
+  // fine and proves nothing. The puzzle is that you cannot stand on the plate
+  // and walk through the door at the same time, which is a problem exactly one
+  // person has, and the suitcase is the answer.
+  // Wide, on purpose. You are carrying the thing out in front of you and it
+  // keeps some of your speed when you let go; a narrow plate turns a nice idea
+  // into a placement puzzle nobody asked for.
+  plate: { x: 1620, w: 230, needs: 2.0 },
+  // It shuts slowly enough that sprinting off the plate is a valid, silly
+  // answer too - you just have to mean it.
   door:  { x: 1900, travel: 190, close: 0.007 },
 
   // and a lump of ceiling that lets go, once, on cue
@@ -67,7 +84,7 @@ const SOLO1 = {
     { id: 'walk',  at: 520,  title: 'MIND THE CEILING', hint: 'That was not your fault. Probably.' },
     { id: 'step',  at: 1060, title: 'OVER YOU GO',      hint: 'Just walk into it. You will manage.' },
     { id: 'case',  at: 1280, title: 'A SUITCASE',        hint: 'Heavy things are useful. Pick it up.' },
-    { id: 'plate', at: 1560, title: 'THE DOOR IS SHUT',  hint: 'You are not heavy enough alone. The case is.' },
+    { id: 'plate', at: 1560, title: 'THE DOOR IS SHUT',  hint: 'Something has to stay on the plate. You cannot.' },
     { id: 'out',   at: 1980, title: 'OUT',              hint: 'Go on then.' },
   ],
 };
@@ -82,6 +99,10 @@ const COOP1 = {
   solo: false,
   end: 5320,
   spawns: [{ x: 190, y: FLOOR1 - 120 }, { x: 470, y: FLOOR1 - 120 }],
+
+  // Two storeys and a shaft you are meant to be able to see down, so the
+  // camera is left alone here.
+  floors: [FLOOR1, FLOOR2],
 
   props: [
     { id: 'bed1',   type: 'bed',    x: 190,  y: FLOOR1 - 26, w: 190, h: 46, mass: 5 },
