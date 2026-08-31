@@ -22,7 +22,7 @@ import {
 } from './render.mjs';
 import { UI } from './ui.mjs';
 import { eventById } from '../shared/chaos.mjs';
-import { wake, setMusic, setEnabled, audio, sfx, audioNodes } from './audio.mjs';
+import { wake, setMusic, setEnabled, audio, sfx, amb, audioNodes } from './audio.mjs';
 import { initVoice, say, step as footstep } from './voice.mjs';
 import {
   fx, updateFx, drawFx, clearFx, dust, chips, splash, ring, star, streak, punch, freeze,
@@ -147,6 +147,7 @@ function syncEndScreen() {
   G.endShown = over;
   if (!over) return UI.hideEnd();
   const alone = !!G.sim.level.def.solo;
+  amb.silence();   // ending a run mid-fall must not leave the wind blowing
   if (G.sim.state === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true, alone); }
   else { sfx.fail(); moment('collapsed'); UI.showEnd(false, alone); }
 }
@@ -492,8 +493,8 @@ window.__toggleBot = toggleBot;
 // Remembered per character so a landing, a footstep or a yelp fires once
 // rather than every frame it is true for.
 const feel = [
-  { air: false, phase: 0, squash: 0, lastYelp: 0 },
-  { air: false, phase: 0, squash: 0, lastYelp: 0 },
+  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0 },
+  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0 },
 ];
 
 /** Turn this frame's collisions into noise, dust and camera movement. */
@@ -538,6 +539,7 @@ function reactToImpacts(dt) {
   }
 
   // --- per-character continuous feel -------------------------------------
+  let wind = 0, skid = 0, drag = 0;
   for (let i = 0; i < 2; i++) {
     if (!G.sim.connected[i]) continue;
     const rd = G.sim.players[i];
@@ -547,31 +549,84 @@ function reactToImpacts(dt) {
     const airborne = !rd.grounded;
     const speed = Math.hypot(t.velocity.x, t.velocity.y);
 
-    // footsteps, on the beat of the walk cycle the renderer is already using
+    // Footsteps, on the beat of the walk cycle the renderer is already using.
+    // Alternate feet are half a tone apart, because two identical taps in a
+    // row is a metronome and two slightly different ones is a person.
     if (!airborne && Math.abs(t.velocity.x) > 1.2) {
       const ph = Math.floor(rd.phase / Math.PI);
       if (ph !== f.phase) {
         f.phase = ph;
-        footstep(who, Math.min(1, Math.abs(t.velocity.x) / 5), G.sim.sprinklers > 0);
+        f.foot ^= 1;
+        const hard = Math.min(1, Math.abs(t.velocity.x) / 5);
+        footstep(who, hard * (f.foot ? 1 : 0.82), G.sim.sprinklers > 0);
         dust(t.position.x, rd.parts.shinF.bounds.max.y, 2, 0.5);
       }
     }
 
-    // the long fall: air noise, streaks, and eventually a scream
+    // Hauling yourself over something. rd.stepping is set to 12 on the frame
+    // the lift begins, so a rising value is a new clamber.
+    if (rd.stepping > f.stepping) {
+      sfx.clamber();
+      say('effort', who, 0.55);
+    }
+    f.stepping = rd.stepping;
+
+    // The push-off. rd.rising counts down from the frame a jump fires.
+    if (rd.rising > f.rising) { sfx.effort(); say('grunt', who, 0.5); }
+    f.rising = rd.rising;
+
+    // Falling. Remember how fast you were going DOWN, because by the time the
+    // collision is reported the velocity has already been turned into a bounce.
+    if (airborne) f.fallVy = Math.max(f.fallVy, t.velocity.y);
     if (airborne && t.velocity.y > 8) {
       streak(t.position.x, t.position.y, -t.velocity.x, -t.velocity.y);
-      if (t.velocity.y > 13) {
-        sfx.whoosh(Math.min(1, t.velocity.y / 26));
-        say('panic', who, 0.8);
-      }
+      if (t.velocity.y > 13) say('panic', who, 0.8);
     }
+
+    // and landing on your feet, which is not a collision the sim reports as an
+    // impact unless it was hard enough to hurt
+    if (f.air && !airborne) {
+      const force = Math.min(1, Math.max(0, (f.fallVy - 3.4) / 15));
+      if (force > 0.02) {
+        sfx.land(force);
+        if (force > 0.62) say('oof', who, force);
+      }
+      f.fallVy = 0;
+    }
+    if (!airborne) f.fallVy = 0;
+
+    // a foot turning over as you change your mind at speed. An edge, not an
+    // exact value: the sim runs on its own clock and a frame can step straight
+    // past any particular number.
+    if (!airborne && rd.skid > f.skid) sfx.scuff();
+    f.skid = rd.skid;
+
     if (rd.launched > 20) say('yelp', who, 1);
     if (rd.tripped === 13) { say('huh', who, 0.7); dust(t.position.x, t.position.y + 40, 5, 1.2); }
     if (rd.stun === 1) say('groan', who, 0.5);
     f.air = airborne;
     f.squash = Math.max(0, f.squash - dt * 4.2);
     rd.squash = f.squash;      // the renderer reads this
+
+    // --- what these two are doing continuously, for the beds below --------
+    if (airborne && t.velocity.y > 5) {
+      wind = Math.max(wind, Math.min(1, (t.velocity.y - 5) / 17));
+    }
+    if (!airborne && rd.skid > 0) {
+      skid = Math.max(skid, Math.min(1, Math.abs(t.velocity.x) / 6.5));
+    }
+    const held = rd.grabs && (rd.grabs.F || rd.grabs.B);
+    if (held && held.bodyB && held.bodyB.plugin.liftable === false && !airborne) {
+      drag = Math.max(drag, Math.min(1, Math.abs(t.velocity.x) / 5));
+    }
   }
+
+  // One wind, one skid, one drag, however many people are making them. Set
+  // every frame including to zero: these are levels, not events, and the only
+  // way one of them stops is by being told to.
+  amb.wind(wind);
+  amb.skid(skid);
+  amb.drag(drag);
 }
 
 /* -------------------------------------------------------------------- HUD */
@@ -1059,6 +1114,7 @@ function drawMenuScene(dt) {
     onQuit: () => {
       G.playing = false;
       setMusic('menu');
+      amb.silence();
       if (G.net) G.net.close();
     },
     onChar: (id) => {

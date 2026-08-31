@@ -105,6 +105,78 @@ function noise({ dur = 0.2, gain = 0.12, at = 0, band = 0, q = 1, dest = null })
   src.start(t);
 }
 
+/* --------------------------------------------------- continuous textures
+ *
+ * Wind, scraping and dragging are not events, they are STATES: they last as
+ * long as the thing is happening and they change while it happens. Firing a
+ * one-shot every frame for those - which is what the falling whoosh used to do
+ * - stacks sixty overlapping noise bursts a second into a flat hiss that no
+ * longer has anything to do with how fast you are going.
+ *
+ * So each of them is one looping noise source that lives for the whole
+ * session, and the game moves its gain and its filter around. Silent until
+ * something asks for it, and free after that.
+ */
+const beds = {};
+
+function bed(name, band, q) {
+  if (!ctx) return null;
+  let b = beds[name];
+  if (!b) {
+    const n = Math.floor(ctx.sampleRate * 2);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = band;
+    f.Q.value = q;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    src.connect(f).connect(g).connect(sfxGain);
+    src.start();
+    b = { src, f, g };
+    beds[name] = b;
+  }
+  return b;
+}
+
+/** Set a texture's level for this frame. 0 fades it out; it never stops. */
+function texture(name, level, { band, q = 0.8, gain = 0.2 } = {}) {
+  const b = bed(name, band, q);
+  if (!b) return;
+  const on = audio.soundOn ? Math.max(0, Math.min(1, level)) : 0;
+  const t = now();
+  // A short time constant on the way up so a landing is instant, a longer one
+  // on the way down so nothing clicks off.
+  b.g.gain.setTargetAtTime(on * gain, t, on > 0.001 ? 0.04 : 0.12);
+  if (band) b.f.frequency.setTargetAtTime(band, t, 0.06);
+}
+
+export const amb = {
+  /** Air past your ears, 0..1. Gets louder AND brighter as you fall faster. */
+  wind(level) {
+    texture('wind', level, { band: 300 + level * 1500, q: 0.5, gain: 0.30 });
+  },
+  /** Shoes losing an argument with a carpet. */
+  skid(level) {
+    texture('skid', level, { band: 1600 + level * 900, q: 1.1, gain: 0.16 });
+  },
+  /** Something heavy being shoved along the floor. */
+  drag(level) {
+    texture('drag', level, { band: 240 + level * 260, q: 0.9, gain: 0.20 });
+  },
+  /** Everything off, at once, for when nobody is playing. */
+  silence() {
+    // only beds that already exist: creating one here would build it with no
+    // filter frequency, which is a NaN and a permanently broken node
+    for (const b of Object.values(beds)) b.g.gain.setTargetAtTime(0, now(), 0.1);
+  },
+};
+
 /* ------------------------------------------------------- the funny noises */
 
 export const sfx = {
@@ -156,6 +228,32 @@ export const sfx = {
     tone({ freq: 110, to: 48, dur: 0.16, type: 'square', gain: 0.1 });
   },
   thud() { noise({ dur: 0.13, gain: 0.14, band: 180, q: 0.8 }); },
+
+  /* --- feet, and what happens to them ----------------------------------- */
+
+  /** Landing on your feet. `force` 0..1 is how fast you were going down. */
+  land(force) {
+    const f = Math.max(0, Math.min(1, force));
+    noise({ dur: 0.09 + f * 0.10, gain: 0.07 + 0.20 * f, band: 150 + 110 * f, q: 0.7 });
+    tone({ freq: 128, to: 44, dur: 0.10 + f * 0.14, type: 'sine', gain: 0.03 + 0.11 * f });
+    // heels clattering after a real drop
+    if (f > 0.5) noise({ dur: 0.14, gain: 0.06 * f, band: 1100, q: 1.0, at: 0.03 });
+  },
+
+  /** The push-off: cloth, and a shoe leaving the floor. */
+  effort() {
+    noise({ dur: 0.09, gain: 0.05, band: 1500, q: 0.9 });
+    tone({ freq: 210, to: 148, dur: 0.07, type: 'triangle', gain: 0.028 });
+  },
+
+  /** Hauling yourself over something you should have walked round. */
+  clamber() {
+    noise({ dur: 0.20, gain: 0.06, band: 620, q: 0.8 });
+    noise({ dur: 0.13, gain: 0.045, band: 2200, q: 1.2, at: 0.07 });
+  },
+
+  /** A foot turning over on the spot. */
+  scuff() { noise({ dur: 0.12, gain: 0.05, band: 2400, q: 1.1 }); },
 
   /** planting your feet */
   brace() { tone({ freq: 90, to: 130, dur: 0.14, type: 'sawtooth', gain: 0.07 }); },
