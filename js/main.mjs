@@ -155,7 +155,13 @@ function syncEndScreen() {
   if (!over) return UI.hideEnd();
   const alone = !!G.sim.level.def.solo;
   amb.silence();   // ending a run mid-fall must not leave the wind blowing
-  if (G.sim.state === 'escaped') { sfx.win(); setMusic('menu'); UI.showEnd(true, alone); }
+  if (G.sim.state === 'escaped') {
+    // Said HERE rather than on the 'escaped' event. The end of a run is read
+    // off the snapshot state precisely because an event can go missing - and
+    // an event going missing was taking the only cheer in the game with it.
+    say('cheer', G.chars[G.slot], 1);
+    sfx.win(); setMusic('menu'); UI.showEnd(true, alone);
+  }
   else { sfx.fail(); moment('collapsed'); UI.showEnd(false, alone); }
 }
 
@@ -170,7 +176,6 @@ function handleEvent(ev) {
     ring(ev.x, ev.y, 9);
     dust(ev.x, ev.y + 40, 10, 2.2);
   }
-  if (ev.type === 'escaped') say('cheer', G.chars[G.slot], 1);
   if (ev.type === 'tileGo') { punch(0.3); chips(ev.x, 620, 8, 1.6, '120,110,100'); }
   if (ev.type === 'shutterSlam') { punch(0.7); freeze(70); dust(ev.x, 600, 12, 2.4); }
   if (ev.type === 'press') star(ev.x, ev.y - 20);
@@ -590,19 +595,28 @@ function reactToImpacts(dt) {
 
     // Falling. Remember how fast you were going DOWN, because by the time the
     // collision is reported the velocity has already been turned into a bounce.
+    // Measured, not guessed. A ragdoll's terminal speed in this world is about
+    // 22, a 800-unit drop reaches 14.7 and a 500-unit one about 9.5 - so the
+    // old "scream above 13" needed a fall taller than any room in the game and
+    // the scream had, as far as anybody could tell, never once been heard.
     if (airborne) f.fallVy = Math.max(f.fallVy, t.velocity.y);
-    if (airborne && t.velocity.y > 8) {
+    if (airborne && t.velocity.y > 6.5) {
       streak(t.position.x, t.position.y, -t.velocity.x, -t.velocity.y);
-      if (t.velocity.y > 13) say('panic', who, 0.8);
+      if (t.velocity.y > 8.5) say('panic', who, Math.min(1, t.velocity.y / 14));
     }
 
     // and landing on your feet, which is not a collision the sim reports as an
     // impact unless it was hard enough to hurt
     if (f.air && !airborne) {
-      const force = Math.min(1, Math.max(0, (f.fallVy - 3.4) / 15));
+      // Same correction: over 15 the scale never left its bottom third, so
+      // every landing in the game sounded like the same soft tap.
+      const force = Math.min(1, Math.max(0, (f.fallVy - 3.0) / 10));
       if (force > 0.02) {
         sfx.land(force);
-        if (force > 0.62) say('oof', who, force);
+        // A drop that gets you to 8 or so is already a landing worth
+        // complaining about; at 0.62 the complaint needed most of the height
+        // the building has.
+        if (force > 0.5) say('oof', who, force);
       }
       f.fallVy = 0;
     }
@@ -644,8 +658,8 @@ function reactToImpacts(dt) {
     rd.squash = f.squash;      // the renderer reads this
 
     // --- what these two are doing continuously, for the beds below --------
-    if (airborne && t.velocity.y > 5) {
-      wind = Math.max(wind, Math.min(1, (t.velocity.y - 5) / 17));
+    if (airborne && t.velocity.y > 4) {
+      wind = Math.max(wind, Math.min(1, (t.velocity.y - 4) / 13));
     }
     if (!airborne && rd.skid > 0) {
       skid = Math.max(skid, Math.min(1, Math.abs(t.velocity.x) / 6.5));

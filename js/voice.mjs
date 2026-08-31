@@ -52,6 +52,14 @@ let ctx = null;
 let out = null;
 const lastAt = new Map();
 
+/* Which lines have actually been spoken, and when.
+ *
+ * `lastAt` already exists to stop a line stacking on itself, so this costs
+ * nothing: it just makes the record readable from outside. A voice line that
+ * is wired up but never actually reached sounds exactly like one that was
+ * never written, and grepping for the call site does not tell them apart. */
+export const spokenLines = () => Object.fromEntries(lastAt);
+
 export function initVoice(audioCtx, destination) {
   ctx = audioCtx;
   out = destination;
