@@ -57,6 +57,13 @@ const sfxMap = {
   shutterSlam: () => sfx.slam(),
   liftHere: () => sfx.ding(),
   press: (ev) => (ev.id === 'alarm' && ev.on ? sfx.alarm() : sfx.click()),
+  // The lump of ceiling letting go. This is the loudest thing that happens in
+  // the first scene and it was completely silent: the tutorial announced MIND
+  // THE CEILING and then a rock arrived without a sound.
+  ceiling: () => { sfx.crash(); sfx.rumble(); },
+  // a new objective, with the smallest possible blip - the banner is the
+  // message, this is only so it does not appear out of nowhere
+  beat: () => sfx.tick(),
 };
 
 /* ------------------------------------------------------------------- state */
@@ -167,6 +174,7 @@ function handleEvent(ev) {
   if (ev.type === 'tileGo') { punch(0.3); chips(ev.x, 620, 8, 1.6, '120,110,100'); }
   if (ev.type === 'shutterSlam') { punch(0.7); freeze(70); dust(ev.x, 600, 12, 2.4); }
   if (ev.type === 'press') star(ev.x, ev.y - 20);
+  if (ev.type === 'ceiling') { punch(0.6); freeze(60); dust(ev.x, ev.y, 14, 2.6); }
   if (ev.type === 'chaos') {
     const e = eventById(ev.id);
     if (e) {
@@ -492,9 +500,14 @@ window.__toggleBot = toggleBot;
 
 // Remembered per character so a landing, a footstep or a yelp fires once
 // rather than every frame it is true for.
+let lastOpen = 0;
+let doorMoving = false;
+
 const feel = [
-  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0 },
-  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0 },
+  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0,
+    gripBody: null, bracing: false },
+  { air: false, phase: 0, squash: 0, lastYelp: 0, fallVy: 0, foot: 0, stepping: 0, rising: 0, skid: 0,
+    gripBody: null, bracing: false },
 ];
 
 /** Turn this frame's collisions into noise, dust and camera movement. */
@@ -601,6 +614,28 @@ function reactToImpacts(dt) {
     if (!airborne && rd.skid > f.skid) sfx.scuff();
     f.skid = rd.skid;
 
+    // Taking hold of something, and letting go of it. Both were silent, which
+    // is the worst thing a verb can be: you press the button and the only way
+    // to know whether it worked is to look at the drawing.
+    const grip = rd.grabs && (rd.grabs.F || rd.grabs.B);
+    const gripBody = grip ? grip.bodyB : null;
+    if (gripBody && gripBody !== f.gripBody) {
+      // a light thing comes up off the floor; a heavy one you just get your
+      // hands onto, and it does not care
+      if (gripBody.plugin.liftable === false) sfx.thud();
+      else sfx.boing();
+    } else if (!gripBody && f.gripBody) {
+      sfx.release();
+      // let go at a run and you did not put it down, you threw it
+      const throwing = Math.abs(t.velocity.x) > 3.2;
+      if (throwing) { sfx.whoosh(Math.min(1, Math.abs(t.velocity.x) / 7)); say('effort', who, 0.6); }
+    }
+    f.gripBody = gripBody;
+
+    // planting your feet to launch somebody
+    if (rd.bracing && !f.bracing) sfx.brace();
+    f.bracing = rd.bracing;
+
     if (rd.launched > 20) say('yelp', who, 1);
     if (rd.tripped === 13) { say('huh', who, 0.7); dust(t.position.x, t.position.y + 40, 5, 1.2); }
     if (rd.stun === 1) say('groan', who, 0.5);
@@ -620,6 +655,18 @@ function reactToImpacts(dt) {
       drag = Math.max(drag, Math.min(1, Math.abs(t.velocity.x) / 5));
     }
   }
+
+  // The shutter or the door on its way open. It slams when it shuts and was
+  // silent when it opened, so the reward for solving the puzzle was nothing.
+  // Once per OPENING, latched - not once per frame in which the door happens
+  // to be moving. Standing on the plate makes it inch open and shut again as
+  // you shift your weight, and "is it moving" is true on most of those frames:
+  // trigger on that and the reward for solving the puzzle is sixteen
+  // overlapping creaks.
+  const open = G.sim.mech.shutterOpen || 0;
+  if (open > 0.06 && !doorMoving) { sfx.creak(); doorMoving = true; }
+  if (open < 0.02) doorMoving = false;
+  lastOpen = open;
 
   // One wind, one skid, one drag, however many people are making them. Set
   // every frame including to zero: these are levels, not events, and the only
@@ -1043,15 +1090,29 @@ function drawMenuScene(dt) {
   }
 
   // Painted props. Anything without one falls back to the drawn box, so a
-  // missing render is a plain suitcase rather than an invisible one.
-  try {
-    const meta = await (await fetch(asset('props/props.json'))).json();
-    for (const kind of Object.keys(meta)) {
-      const im = new Image();
-      im.onload = () => { PROP_ART[kind] = { im, ...meta[kind] }; };
-      im.src = asset('props/' + kind + '.webp');
-    }
-  } catch { /* no painted props yet; the drawn ones still work */ }
+  // missing render is a plain suitcase rather than an invisible one - which is
+  // exactly why this must NOT be awaited. Blocking boot on it delayed the
+  // moment the menu buttons were bound, and a menu that is drawn but not yet
+  // listening is a menu that ignores you.
+  fetch(asset('props/props.json'))
+    .then((r) => r.json())
+    .then((meta) => {
+      for (const kind of Object.keys(meta)) {
+        const im = new Image();
+        im.onload = () => { PROP_ART[kind] = { im, ...meta[kind] }; };
+        im.src = asset('props/' + kind + '.webp');
+      }
+    })
+    .catch(() => { /* no painted props yet; the drawn ones still work */ });
+
+  // Menu buttons were silent. The click is also the gesture that is allowed to
+  // start the audio context, so this is where the game first becomes audible -
+  // in capture, so it lands even on a button that changes the screen.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('[data-act], [data-nav], .card')) return;
+    wake();
+    sfx.click();
+  }, true);
 
   // skipping the tutorial, by key or by tapping the corner of its card
   addEventListener('keydown', (e) => {
